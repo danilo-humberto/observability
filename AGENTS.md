@@ -1,51 +1,53 @@
-# Convenções do projeto
+# Orientações do projeto
 
 ## Objetivo e comunicação
 
-Este é um projeto acadêmico de Sistemas Distribuídos para demonstrar observabilidade do PostgreSQL e o problema N+1. Responda em português brasileiro e explique decisões técnicas e seus trade-offs de forma acessível. Diferencie comportamento implementado, arquitetura planejada e recomendações.
+Este projeto de Sistemas Distribuídos vai mostrar como observar o PostgreSQL e entender o problema N+1. Responda em português brasileiro, com explicações simples e diretas. Explique os termos técnicos importantes e as vantagens e desvantagens das escolhas. Deixe claro o que já existe, o que está planejado e o que é uma sugestão.
 
-## Implementação incremental
+## Trabalhe uma etapa por vez
 
-- Consulte o [plano de implementação](docs/plano-implementacao.md) e execute exclusivamente a etapa autorizada pelo usuário.
-- Antes de implementar, apresente brevemente os arquivos que pretende criar ou modificar.
-- Investigue os arquivos reais antes de afirmar como o projeto funciona.
-- Ao concluir uma etapa, relate mudanças, validações, limitações e próxima etapa; pare e solicite autorização para continuar.
-- Não avance automaticamente nem acrescente funcionalidades de etapas futuras.
-- Em modo de planejamento, investigue e proponha; não altere arquivos de implementação.
+- Consulte o [plano de implementação](docs/plano-implementacao.md) e faça apenas a etapa autorizada pelo usuário.
+- Antes de começar a implementação, diga quais arquivos pretende criar ou alterar.
+- Leia os arquivos do projeto antes de afirmar como ele funciona.
+- Ao terminar uma etapa, explique o que mudou, o que foi verificado, as limitações e o próximo passo. Pare e peça autorização para continuar.
+- Não comece a próxima etapa por conta própria nem adiante suas funcionalidades.
+- No modo de planejamento, investigue e proponha soluções, sem alterar arquivos de implementação.
 
-## Organização e simplicidade
+## Onde colocar cada coisa
 
-- `services/pedidos-api/`: entrada HTTP e comunicação com o serviço de dados.
-- `services/dados-api/`: acesso ao PostgreSQL com `pg` e execução de SQL.
-- `database/`: futuros artefatos de modelagem, inicialização e dados reproduzíveis.
-- `observability/`: futuras configurações de instrumentação, traces e métricas.
-- `tests/`: testes e experimentos proporcionais às etapas.
-- `docs/`: arquitetura, plano e documentação necessária ao entendimento do projeto.
-- Mantenha os dois serviços no mesmo repositório. Não introduza workspaces, frameworks, padrões ou abstrações sem necessidade demonstrada e alinhamento com o usuário.
-- Priorize código simples, legível e mudanças pequenas e revisáveis. Respeite as convenções que forem estabelecidas na implementação.
+- `services/pedidos-api/`: recebe chamadas HTTP e conversa com o serviço de dados.
+- `services/dados-api/`: consulta o PostgreSQL usando `pg` e SQL.
+- `database/`: arquivos para criar o banco e gerar dados que possam ser repetidos nos testes.
+- `observability/`: configurações para acompanhar requisições, consultas e números do sistema.
+- `tests/`: testes e experimentos de cada etapa.
+- `docs/`: explicações sobre a organização, o plano e o funcionamento do projeto.
 
-## Invariantes do experimento
+Mantenha os dois serviços no mesmo repositório. Evite adicionar ferramentas ou formas de organizar o código sem uma necessidade clara e sem conversar com o usuário. Isso inclui workspaces, que permitem gerenciar vários pacotes juntos.
 
-- Os endpoints lento e otimizado devem retornar os mesmos registros, estrutura JSON e ordenação estável.
-- O caminho lento deve executar uma consulta inicial de pedidos e uma consulta de cliente por pedido; o otimizado deve utilizar JOIN.
-- Não use atrasos artificiais para produzir diferenças de latência.
-- Os dados iniciais devem ser reproduzíveis, com 1.000 clientes e 10.000 pedidos por padrão e quantidades ajustáveis.
-- Compare as implementações sob condições equivalentes e registre as limitações dos resultados.
+Prefira código simples e fácil de ler, mudanças pequenas e as convenções já usadas no projeto.
 
-## Aprovações e preservação
+## Regras do experimento
 
-- Preserve trabalho existente. Inspecione o estado Git e os diffs quando houver repositório inicializado.
-- Não inicialize Git, crie commits, branches, tags, pull requests ou faça pushes sem autorização.
-- Não execute ações destrutivas nem remova arquivos importantes sem autorização explícita.
-- Solicite aprovação antes de adicionar ou alterar materialmente dependências, esquemas, migrações, contratos públicos, segurança ou infraestrutura. A aprovação explícita desses itens dentro de uma etapa cobre o escopo aprovado.
-- Não realize deploys nem execute comandos em produção sem autorização explícita.
-- Não registre segredos ou dados pessoais em código, documentação, logs ou testes. Use placeholders em exemplos de ambiente.
+- As rotas lenta e otimizada devem retornar os mesmos registros, na mesma ordem e com o mesmo formato JSON.
+- A versão lenta deve buscar os pedidos e depois consultar o cliente de cada pedido. A otimizada deve usar JOIN.
+- Não adicione esperas artificiais para aumentar o tempo de resposta.
+- A geração inicial deve permitir repetir os mesmos dados, com 1.000 clientes e 10.000 pedidos por padrão e quantidades ajustáveis.
+- Compare as duas versões em condições equivalentes e explique as limitações dos resultados.
 
-## Validação e documentação
+## Cuidados e autorizações
 
-- Utilize testes proporcionais ao comportamento alterado e execute primeiro as verificações mais direcionadas.
-- Não invente resultados nem apresente mocks como evidência de consultas ou integrações reais.
-- Relate os comandos executados, seus resultados e o que não foi possível validar.
-- Revise o conteúdo final e os diffs disponíveis para evitar mudanças fora do escopo, arquivos temporários e segredos.
-- Atualize documentação quando o comportamento durável mudar. Não descreva componentes planejados como já executáveis.
-- Durante a Etapa 1, crie somente estrutura, documentação e `.gitignore`: sem APIs, SQL, Compose funcional ou integrações.
+- Preserve o trabalho existente. Quando houver Git, confira seu estado e as diferenças entre os arquivos antes de alterar o projeto.
+- Não inicialize Git, crie commits, branches, tags ou pull requests, nem envie alterações para o repositório remoto sem autorização.
+- Não remova arquivos importantes nem faça ações que possam apagar trabalho sem autorização explícita.
+- Peça aprovação antes de adicionar ou mudar de forma importante bibliotecas, estrutura do banco, migrações, contratos das APIs, segurança ou infraestrutura. Migrações são arquivos que registram mudanças na estrutura do banco. Contratos das APIs definem como enviar pedidos e receber respostas. Se esses itens já foram aprovados dentro da etapa, não é preciso pedir novamente para o mesmo trabalho.
+- Não publique a aplicação nem execute comandos em produção sem autorização explícita.
+- Não coloque senhas, tokens ou dados pessoais no código, na documentação, nos logs ou nos testes. Use valores fictícios nos exemplos de configuração.
+
+## Como conferir e documentar
+
+- Faça testes adequados ao tamanho e ao risco da mudança. Comece pelas verificações mais próximas do que foi alterado.
+- Não invente resultados. Dados simulados em testes não comprovam que uma consulta ou integração real funcionou.
+- Informe os comandos executados, os resultados e o que não foi possível verificar.
+- Revise os arquivos e as diferenças disponíveis para encontrar mudanças fora do pedido, arquivos temporários e informações sensíveis.
+- Atualize a documentação quando houver mudanças que afetem o entendimento ou o uso do projeto. Deixe claro quando algo ainda é apenas planejado.
+- Na Etapa 1, faça somente as pastas, a documentação e o `.gitignore`. APIs, SQL, Compose funcional e integrações ficam para depois.
