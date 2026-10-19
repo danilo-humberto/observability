@@ -6,7 +6,7 @@ Projeto para o seminário de Sistemas Distribuídos do IFPE. Vamos mostrar como 
 
 ## Onde estamos
 
-A Etapa 3 acrescenta **duas APIs Node.js 22, TypeScript e Express 5**, comunicação HTTP, acesso ao PostgreSQL com `pg` e tratamento básico de falhas. PostgreSQL e APIs iniciam pelo mesmo Docker Compose. As consultas N+1 e JOIN e as ferramentas de observabilidade continuam planejadas. O repositório Git já está inicializado.
+A Etapa 4 acrescenta as rotas de pedidos com **N+1 e JOIN**, mantendo duas APIs Node.js 22, TypeScript e Express 5 e acesso ao PostgreSQL com `pg`. PostgreSQL e APIs iniciam pelo mesmo Docker Compose. As ferramentas de observabilidade continuam planejadas. O repositório Git já está inicializado.
 
 ## Executar o ambiente completo
 
@@ -43,24 +43,24 @@ Essa escolha simplifica a apresentação local, mas dá à dados-api permissões
 
 ### Rotas e falhas
 
-| Rota | Verificação |
-| --- | --- |
+| Rota                    | Verificação                                     |
+| ----------------------- | ----------------------------------------------- |
 | `/health` nas duas APIs | Processo HTTP vivo, sem consultar dependências. |
-| `/ready` na dados-api | Consulta real `SELECT 1` ao PostgreSQL. |
+| `/ready` na dados-api   | Consulta real `SELECT 1` ao PostgreSQL.         |
 | `/ready` na pedidos-api | Chamada HTTP à dados-api, que consulta o banco. |
 
 O sucesso retorna `{"status":"ok","service":"pedidos-api"}` ou `dados-api`, conforme o serviço. Erros usam `{"error":{"code":"CODIGO","message":"Mensagem segura"}}`.
 
-Na dados-api, falha do banco retorna `503 DATABASE_UNAVAILABLE`. Na pedidos-api: dependência não pronta retorna `503 DEPENDENCY_UNAVAILABLE`; falha de conexão ou resposta inválida retorna `502 BAD_GATEWAY`; prazo excedido retorna `504 GATEWAY_TIMEOUT`. Rotas desconhecidas retornam `404 NOT_FOUND`; erros inesperados recebem `500 INTERNAL_ERROR`. As rotas de pedidos ainda não existem.
+Na dados-api, falha do banco retorna `503 DATABASE_UNAVAILABLE`. Na pedidos-api: dependência não pronta retorna `503 DEPENDENCY_UNAVAILABLE`; falha de conexão ou resposta inválida retorna `502 BAD_GATEWAY`; prazo excedido retorna `504 GATEWAY_TIMEOUT`. Rotas desconhecidas retornam `404 NOT_FOUND`; erros inesperados recebem `500 INTERNAL_ERROR`. As rotas de pedidos estão descritas abaixo.
 
 Ao parar a dados-api, o Docker pode recusar a conexão ou demorar na resolução do nome interno. Por isso, a falha real pode aparecer como 502 ou 504, conforme a conexão falhe antes ou depois do prazo configurado.
 
-| Variável no `.env` | Padrão | Finalidade |
-| --- | --- | --- |
-| `PGPOOL_MAX` | 10 | Máximo de conexões reutilizáveis da dados-api. |
-| `PGCONNECT_TIMEOUT_MS` | 1000 | Prazo para adquirir/abrir conexão. |
-| `PGSTATEMENT_TIMEOUT_MS` | 1000 | Limite de execução SQL no servidor, por consulta. |
-| `HTTP_TIMEOUT_MS` | 3000 | Prazo HTTP incluindo leitura do corpo. |
+| Variável no `.env`       | Padrão | Finalidade                                        |
+| ------------------------ | ------ | ------------------------------------------------- |
+| `PGPOOL_MAX`             | 10     | Máximo de conexões reutilizáveis da dados-api.    |
+| `PGCONNECT_TIMEOUT_MS`   | 1000   | Prazo para adquirir/abrir conexão.                |
+| `PGSTATEMENT_TIMEOUT_MS` | 1000   | Limite de execução SQL no servidor, por consulta. |
+| `HTTP_TIMEOUT_MS`        | 3000   | Prazo HTTP incluindo leitura do corpo.            |
 
 Os limites devem ser inteiros positivos. Não há retries automáticos ou esperas artificiais nas APIs. Healthchecks consultam `/ready`; `depends_on` ordena a partida, mas não reinicia automaticamente APIs quando uma dependência falha depois. Os processos continuam vivos e podem se recuperar quando a dependência volta. Limites do healthcheck são fixos para esta etapa e precisarão ser alinhados se os timeouts forem aumentados.
 
@@ -81,10 +81,10 @@ O Compose usa a imagem oficial `postgres:18.6-alpine`. O volume nomeado é monta
 
 ### Modelo e carga inicial
 
-| Tabela | Colunas |
-| --- | --- |
-| `clients` | `id`, `name`, `created_at` |
-| `orders` | `id`, `client_id`, `description`, `amount`, `created_at` |
+| Tabela    | Colunas                                                  |
+| --------- | -------------------------------------------------------- |
+| `clients` | `id`, `name`, `created_at`                               |
+| `orders`  | `id`, `client_id`, `description`, `amount`, `created_at` |
 
 Os IDs são inteiros gerados por identidade, um contador mantido pelo banco. Todos os campos são obrigatórios. `client_id` referencia `clients.id`, sem exclusão em cascata: não é permitido excluir um cliente que tenha pedidos. Há um índice nessa coluna. `amount` é `numeric(12,2)` e não aceita valores negativos; as datas são `timestamptz`.
 
@@ -144,14 +144,58 @@ Os testes de integração usam portas livres, senhas efêmeras em memória e enc
 
 O problema N+1 acontece quando fazemos uma consulta inicial e depois outra consulta para cada resultado. Por exemplo: buscar 100 pedidos e consultar o cliente de cada um gera 101 consultas ao banco. Isso acontece mesmo se vários pedidos forem do mesmo cliente.
 
-A `pedidos-api` terá duas rotas públicas, também chamadas de endpoints:
+A `pedidos-api` oferece dois endpoints:
 
-| Rota planejada | Como vai funcionar |
-| --- | --- |
-| `GET /pedidos/lento?limit=100` | A `dados-api` busca os pedidos e consulta o cliente de cada pedido separadamente. |
-| `GET /pedidos/otimizado?limit=100` | A `dados-api` busca pedidos e clientes juntos, em uma consulta com JOIN. |
+| Rota                               | Como funciona                                                                     |
+| ---------------------------------- | --------------------------------------------------------------------------------- |
+| `GET /pedidos/lento?limit=100`     | A `dados-api` busca os pedidos e consulta o cliente de cada pedido separadamente. |
+| `GET /pedidos/otimizado?limit=100` | A `dados-api` busca pedidos e clientes juntos, em uma consulta com JOIN.          |
 
-JOIN é o recurso do SQL que permite combinar dados de tabelas relacionadas. As duas rotas deverão retornar os mesmos registros, na mesma ordem e com o mesmo formato JSON. O formato da resposta e as regras do parâmetro `limit` serão definidos na Etapa 4.
+As duas rotas retornam os mesmos registros, em ordem crescente de `orders.id`, com o mesmo formato JSON.
+
+### Contrato das rotas de pedidos
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:3000/pedidos/lento?limit=100'
+Invoke-RestMethod 'http://127.0.0.1:3000/pedidos/otimizado?limit=100'
+```
+
+O retorno é uma lista direta; os nomes das colunas são preservados. Exemplo com o primeiro pedido da carga padrão:
+
+```json
+[
+  {
+    "id": 1,
+    "client_id": 1,
+    "description": "Order 1",
+    "amount": "1.38",
+    "created_at": "2024-02-01T00:00:00.000Z",
+    "client": { "id": 1, "name": "Client 1" }
+  }
+]
+```
+
+Sem pedidos, o retorno é HTTP 200 com `[]`.
+
+O `limit` ausente vale 100. Quando informado, deve ser um único valor composto por dígitos, entre 1 e 1.000; zeros à esquerda são aceitos. Valores vazios, negativos, decimais, fora da faixa, repetidos ou estruturados (`limit[]=1`, por exemplo) recebem HTTP 400 com `{"error":{"code":"INVALID_LIMIT","message":"limit deve ser um inteiro entre 1 e 1000."}}`. As duas APIs validam antes de consultar a dependência. Outros parâmetros não alteram a busca.
+
+Cada requisição válida faz uma chamada HTTP à dados-api. A rota lenta consulta pedidos e depois o cliente de cada um sequencialmente, sem cache: `1 + N` consultas, mesmo com clientes repetidos. A otimizada faz uma consulta com `INNER JOIN`. Com zero pedidos, ambas executam uma consulta. Não há contagem SQL, tempos ou metadados adicionais no JSON.
+
+As respostas não são armazenadas em cache (`Cache-Control: no-store`). Falhas não retornam listas parciais. A pedidos-api confere campos, tipos, ordem, limite e relação entre os IDs antes de encaminhar o JSON da dados-api.
+
+Os timeouts continuam em 3 segundos para HTTP e 1 segundo por consulta SQL. O prazo de uma consulta não limita a soma das consultas N+1. Se o HTTP expirar ou o cliente desconectar, as consultas já iniciadas na dados-api podem continuar; não há cancelamento propagado ao banco. O limite de 1.000 reduz o trabalho por requisição, mas não garante sucesso dentro de 3 segundos em qualquer máquina ou sob concorrência. Alterar `HTTP_TIMEOUT_MS` também exige considerar os limites fixos dos healthchecks e do encerramento.
+
+### Verificar a Etapa 4
+
+```powershell
+./tests/Test-Unit.ps1
+./tests/Test-Orders.ps1
+./tests/Test-Services.ps1
+```
+
+`Test-Orders.ps1` inicia ambientes isolados para carga padrão, clientes repetidos (3 clientes e 8 pedidos) e pedidos vazios. Compara o conteúdo completo com uma consulta independente ao banco, verifica respostas idênticas e conta as consultas reais pelos logs do PostgreSQL, excluindo os healthchecks. O arquivo `tests/orders.compose.yaml` habilita SQL nos logs somente nesses ambientes, sem registrar os valores dos parâmetros. Não aplique esse arquivo ao ambiente principal.
+
+O teste verifica os limites 1, 100 e 1.000, parâmetros inválidos nas duas APIs, falha/recuperação do banco e preservação dos registros. Exercita 1.000 pedidos com timeout HTTP de 3 e 30 segundos, este último apenas no teste. Os contêineres são encerrados e os volumes preservados. A comparação usa dados estáveis, sem escritas concorrentes: várias consultas podem observar momentos diferentes do banco. Esses testes comprovam comportamento e quantidade de consultas; não são um benchmark nem demonstram ganho de desempenho.
 
 A carga inicial já gera 1.000 clientes e 10.000 pedidos por padrão. A geração produz os mesmos dados quando repetida com os mesmos parâmetros, e as quantidades podem ser ajustadas em uma inicialização nova.
 

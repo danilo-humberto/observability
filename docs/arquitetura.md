@@ -2,7 +2,7 @@
 
 ## Onde estamos e o que queremos mostrar
 
-Este documento distingue o que existe do que vamos construir. As Etapas 1 e 2 prepararam a organização, o PostgreSQL, o modelo e a carga inicial. A Etapa 3 implementa as APIs, comunicação HTTP e verificação do acesso ao banco. As consultas N+1 e JOIN e a observabilidade ainda são planejadas.
+Este documento distingue o que existe do que vamos construir. As Etapas 1 e 2 prepararam a organização, o PostgreSQL, o modelo e a carga inicial. A Etapa 3 implementou as APIs, comunicação HTTP e verificação do acesso ao banco. A Etapa 4 implementa as consultas N+1 e JOIN. A instrumentação de observabilidade ainda é planejada.
 
 ## O caminho de uma requisição
 
@@ -17,9 +17,9 @@ A resposta volta pelo caminho inverso. Cada API é um serviço separado, com seu
 
 | Parte | Responsabilidade atual ou planejada |
 | --- | --- |
-| pedidos-api | Já recebe HTTP, responde `/health` e chama `/ready` da dados-api; consultas de pedidos virão na Etapa 4. |
-| dados-api | Já responde `/health` e verifica o banco com `SELECT 1` em `/ready`, usando pool de `pg`. |
-| PostgreSQL | Já guarda clientes e pedidos; as consultas das duas versões virão na Etapa 4. |
+| pedidos-api | Recebe HTTP, verifica prontidão e encaminha cada busca de pedidos à dados-api, validando sua resposta. |
+| dados-api | Verifica o banco com `SELECT 1` em `/ready` e consulta pedidos com N+1 ou JOIN, usando pool de `pg`. |
+| PostgreSQL | Guarda clientes e pedidos e executa as consultas das duas versões. |
 | OpenTelemetry | Registrar as operações e levar as informações que ligam uma chamada à outra. |
 | Jaeger | Receber e mostrar o percurso das requisições, chamado de trace. |
 | postgres_exporter | Consultar o PostgreSQL e disponibilizar seus números para coleta. |
@@ -34,18 +34,22 @@ As APIs usam Node.js 22.23.1, TypeScript compilado em ESM e Express 5. Cada uma 
 
 O comando `docker compose -p observability up --build -d --wait` constrói e inicia tudo. A sequência é banco saudável → dados-api pronta → pedidos-api pronta. A pedidos-api é publicada em loopback na porta 3000, ajustável; a dados-api usa 3001 apenas na rede interna. `/health` indica processo vivo e `/ready` verifica dependências. Na pedidos-api, `/ready` percorre os dois serviços até `SELECT 1` no banco.
 
-A dados-api retorna 503 quando o banco falha. A pedidos-api retorna 503 para dependência não pronta, 502 para comunicação/resposta inválida e 504 para timeout. Os erros têm `error.code` e `error.message`, sem detalhes internos. O pool tem 10 conexões, aquisição/conexão limitada a 1 segundo, SQL a 1 segundo por consulta e HTTP a 3 segundos incluindo o corpo, configuráveis. Não existem retries automáticos. Uma dependência indisponível não derruba o processo: ele pode recuperar prontidão quando ela voltar. Os limites serão revistos antes da Etapa 4.
+A dados-api retorna 503 quando o banco falha. A pedidos-api retorna 503 para dependência não pronta, 502 para comunicação/resposta inválida e 504 para timeout. Os erros têm `error.code` e `error.message`, sem detalhes internos. O pool tem 10 conexões, aquisição/conexão limitada a 1 segundo, SQL a 1 segundo por consulta e HTTP a 3 segundos incluindo o corpo, configuráveis. Não existem retries automáticos. Uma dependência indisponível não derruba o processo: ele pode recuperar prontidão quando ela voltar. Os limites foram mantidos na Etapa 4; sua adequação depende do ambiente e da quantidade de consultas.
 
 ## As versões lenta e otimizada
 
-A `pedidos-api` terá duas rotas públicas:
+A `pedidos-api` oferece duas rotas públicas:
 
 - `GET /pedidos/lento?limit=100`: a dados-api busca os pedidos e depois consulta o cliente de cada pedido. Com N pedidos, isso gera 1 + N consultas SQL.
 - `GET /pedidos/otimizado?limit=100`: a dados-api busca os mesmos pedidos e seus clientes com uma consulta usando JOIN, que combina dados de tabelas relacionadas.
 
-Cada rota poderá chamar a dados-api uma vez para escolher a busca desejada. As consultas repetidas acontecerão dentro da dados-api, no acesso ao banco.
+Cada requisição válida chama a dados-api uma vez, pela mesma rota e com o limite validado. As consultas repetidas acontecem dentro da dados-api, no acesso ao banco, sequencialmente e sem cache. As duas APIs rejeitam limites inválidos antes de acessar suas dependências.
 
-As duas versões deverão retornar os mesmos registros, na mesma ordem e com o mesmo formato JSON. Na Etapa 4, vamos definir esse formato, as regras do limite de pedidos e a ordenação.
+As duas versões retornam uma lista direta ordenada por `orders.id ASC`, contendo `id`, `client_id`, `description`, `amount`, `created_at` e `client: { id, name }`. Os nomes das colunas são preservados; aliases internos desambiguam o JOIN. `amount` continua string decimal e `created_at` é serializado em ISO UTC. A mesma função monta o JSON dos dois caminhos na dados-api. A pedidos-api verifica o contrato recebido, sem consultar o banco.
+
+`limit` ausente usa 100; aceita um único inteiro escrito com dígitos de 1 a 1.000. Vazio, decimal, negativo, repetido ou estruturado retorna `400 INVALID_LIMIT`. Sem pedidos, ambas retornam `[]`, executando uma consulta. A documentação completa do contrato está no README.
+
+Os timeouts da Etapa 3 foram mantidos. Um timeout HTTP não cancela o trabalho já iniciado na dados-api. A comparação exige dados estáveis: não adicionamos uma transação para garantir uma visão única entre as várias leituras da rota lenta. O teste da Etapa 4 conta consultas em logs SQL apenas de bancos isolados, sem instalar instrumentação no ambiente principal.
 
 A comparação usará o mesmo limite, os mesmos dados e condições equivalentes. Não haverá esperas artificiais. O tempo de resposta dependerá do trabalho real e do ambiente; só saberemos a diferença depois de medir.
 

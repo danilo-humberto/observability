@@ -6,7 +6,7 @@ Cada etapa precisa de autorização do usuário. Antes de começar, vamos aprese
 
 Ao terminar, vamos explicar o que mudou, as decisões tomadas, os comandos usados nas verificações, os resultados e as pendências. Depois, vamos parar e pedir autorização para continuar.
 
-Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organização, banco e dados. A Etapa 3 foi autorizada para implementar as APIs e o ambiente com comando único; as etapas seguintes continuam dependendo de autorização própria.
+Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organização, banco e dados. A Etapa 3 entregou as APIs e o ambiente com comando único. A Etapa 4 foi autorizada para implementar as rotas N+1 e JOIN; as etapas seguintes continuam dependendo de autorização própria.
 
 ## Etapa 1 — Pastas e documentação inicial
 
@@ -32,8 +32,11 @@ Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organizaç
 
 ## Etapa 4 — Rotas lenta e otimizada
 
-- **O que fazer:** criar `GET /pedidos/lento?limit=100` e `GET /pedidos/otimizado?limit=100`, definir o formato JSON, as regras de `limit` e a ordem dos resultados. As consultas ao banco ficam na dados-api.
-- **Como conferir:** comparar as respostas completas usando os mesmos dados e limites; testar valores inválidos e uma busca sem resultados; comprovar 1 + N consultas reais na versão lenta e uma consulta com JOIN na otimizada. Não adicionar esperas artificiais.
+- **Decisões aprovadas e implementadas:** `GET /pedidos/lento?limit=100` e `GET /pedidos/otimizado?limit=100`, com uma chamada HTTP da pedidos-api à dados-api. Retorno em lista direta com `id`, `client_id`, `description`, `amount`, `created_at` e `client: { id, name }`, preservando os nomes das colunas. Valor decimal como string, data ISO UTC e ordenação crescente pelo ID do pedido. Sem resultados retorna `[]`.
+- **Limite e consultas:** `limit` ausente usa 100; um único valor composto por dígitos de 1 a 1.000; entradas inválidas retornam `400 INVALID_LIMIT` nas duas APIs. A lenta executa uma consulta inicial e uma por cliente de cada pedido, sequencialmente, sem cache. A otimizada usa um `INNER JOIN`. SQL parametrizado e serialização comum; sem esperas artificiais, dependências novas ou alterações no banco e Compose principal.
+- **Como conferir:** `./tests/Test-Unit.ps1`, `./tests/Test-Orders.ps1` e `./tests/Test-Services.ps1`. Comparar respostas completas com o banco real, validar contratos e limites e contar as consultas reais nos logs SQL somente de projetos isolados, excluindo healthchecks. Cobrir carga padrão, clientes repetidos e pedidos vazios. A suíte do banco permanece em `./tests/Test-Database.ps1`.
+- **Limitações:** dados estáveis durante a comparação; sem garantia de visão única entre as leituras N+1 sob escritas concorrentes. Mantidos os timeouts de 3 segundos no HTTP e 1 segundo por consulta SQL. Timeout ou desconexão HTTP não cancela as consultas já iniciadas na dados-api. Os testes não são medições de desempenho; traces e métricas continuam nas etapas seguintes.
+- **Validação realizada em 19/10/2026:** `./tests/Test-Unit.ps1` passou com 35 testes (7 na dados-api e 28 na pedidos-api), incluindo compilação TypeScript. `./tests/Test-Orders.ps1` passou com PostgreSQL e APIs reais: respostas completas idênticas e conteúdo conferido com o banco; carga padrão de 1.000 clientes e 10.000 pedidos; 101 consultas contra uma para 100 pedidos; 1.001 contra uma para 1.000 pedidos, com timeout HTTP de 3 e 30 segundos; clientes repetidos (8 pedidos gerando 9 consultas contra uma); pedidos vazios (uma consulta em cada versão); limites inválidos nas duas APIs; falha/recuperação do banco; dados preservados e logs sem a credencial efêmera. A primeira execução encontrou uso de porta temporária antiga após recriar a pedidos-api; o script passou a descobrir a nova porta e a suíte completa foi repetida com sucesso. `./tests/Test-Services.ps1` e `./tests/Test-Database.ps1` também passaram, incluindo validação do Compose. Contêineres de integração encerrados e volumes preservados. O sucesso com 3 segundos vale para esta execução local, sem promessa sob concorrência ou em outras máquinas. Não foram medidos ganhos de desempenho, traces ou métricas.
 - **Quando termina:** as duas rotas retornam os mesmos registros, na mesma ordem e com o mesmo formato, e os testes mostram a diferença na forma de consultar o banco.
 
 ## Etapa 5 — OpenTelemetry e Jaeger
@@ -62,4 +65,4 @@ Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organizaç
 
 ## Próxima etapa
 
-A próxima etapa de funcionalidades é a Etapa 4, que depende de autorização própria. Antes de implementar, definir contratos JSON das rotas lenta e otimizada, validação de `limit`, ordenação e revisão dos timeouts para o experimento. Não antecipar consultas N+1 e JOIN na Etapa 3.
+A Etapa 4 está implementada e validada. A próxima etapa de funcionalidades é a Etapa 5, OpenTelemetry e Jaeger, que depende de autorização própria.

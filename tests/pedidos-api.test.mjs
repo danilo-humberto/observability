@@ -8,7 +8,7 @@ import { serve, getJson } from './http-helper.mjs';
 
 const dist = process.env.SERVICE_DIST_URL ?? new URL('../services/pedidos-api/dist/', import.meta.url).href;
 const { createApp } = await import(dist + 'app.js');
-const { createDadosClient } = await import(dist + 'dados-client.js');
+const { createDadosClient, createOrdersClient } = await import(dist + 'dados-client.js');
 const { readConfig } = await import(dist + 'config.js');
 
 async function setup(t, upstream, timeout = 500) {
@@ -16,7 +16,81 @@ async function setup(t, upstream, timeout = 500) {
   return serve(createApp(createDadosClient(dependency + '/ready', timeout)), t);
 }
 
-test('health independente; ready valida resposta da dados-api; rota futura não existe', async t => {
+const order = {
+  id: 1, client_id: 2, description: 'Order 1', amount: '1.38',
+  created_at: '2024-02-01T00:00:00.000Z', client: { id: 2, name: 'Client 2' }
+};
+async function setupOrders(t, upstream, timeout = 500) {
+  const dependency = await serve(upstream, t);
+  return serve(createApp(async () => {}, createOrdersClient(dependency, timeout)), t);
+}
+
+test('pedidos: valida limit e faz uma chamada HTTP por rota, sem mudar o JSON', async t => {
+  const urls = [];
+  const base = await setupOrders(t, (req, res) => { urls.push(req.url); res.end(JSON.stringify([order])); });
+  for (const mode of ['lento', 'otimizado']) {
+    for (const [query, expected] of [['', 100], ['?limit=1', 1], ['?limit=1000', 1000]]) {
+      const count = urls.length;
+      assert.deepEqual(await getJson(base, `/pedidos/${mode}${query}`), { status: 200, body: [order] });
+      assert.equal(urls.length, count + 1);
+      assert.equal(urls.at(-1), `/pedidos/${mode}?limit=${expected}`);
+    }
+    const count = urls.length;
+    for (const query of ['limit=', 'limit=0', 'limit=-1', 'limit=1.5', 'limit=1001', 'limit=abc',
+      'limit=1&limit=2', 'limit[]=1', 'limit[x]=1', 'limit=1&limit[]=2', 'limit=1e2', 'limit=%201', 'limit=99999999999999999999']) {
+      const result = await getJson(base, `/pedidos/${mode}?${query}`);
+      assert.equal(result.status, 400, query);
+      assert.equal(result.body.error.code, 'INVALID_LIMIT');
+    }
+    assert.equal(urls.length, count);
+  }
+});
+
+test('pedidos: lista vazia é preservada', async t => {
+  const base = await setupOrders(t, (_req, res) => res.end('[]'));
+  assert.deepEqual(await getJson(base, '/pedidos/lento'), { status: 200, body: [] });
+});
+
+for (const [name, body] of [
+  ['objeto', { pedidos: [order] }], ['valor numérico', [{ ...order, amount: 1.38 }]],
+  ['cliente errado', [{ ...order, client: { id: 3, name: 'Client 3' } }]],
+  ['ordem inválida', [order, order]], ['campo ausente', [{ ...order, description: undefined }]],
+  ['ordem decrescente', [{ ...order, id: 2 }, order]],
+  ['data inválida', [{ ...order, created_at: '2024-02-31T00:00:00.000Z' }]],
+  ['campo extra', [{ ...order, extra: 'privado' }]], ['limite excedido', [order, { ...order, id: 2 }]]
+]) {
+  test(`pedidos: resposta com ${name} recebe 502`, async t => {
+    const base = await setupOrders(t, (_req, res) => res.end(JSON.stringify(body)));
+    const limit = name === 'limite excedido' ? 1 : 100;
+    assert.equal((await getJson(base, `/pedidos/otimizado?limit=${limit}`)).status, 502);
+  });
+}
+
+for (const mode of ['lento', 'otimizado']) {
+  test(`pedidos/${mode}: banco indisponível, JSON inválido e timeout não retornam lista parcial`, async t => {
+    let behavior = 'database';
+    let calls = 0;
+    const base = await setupOrders(t, (_req, res) => {
+      calls++;
+      if (behavior === 'database') res.writeHead(503).end(JSON.stringify({ error: { code: 'DATABASE_UNAVAILABLE', message: 'privado' } }));
+      if (behavior === 'json') res.end('{');
+      if (behavior === 'body') { res.writeHead(200); res.write('['); }
+      // 'headers' deixa a resposta pendente somente no servidor simulado.
+    }, 100);
+    for (const [next, status, code] of [['database', 503, 'DEPENDENCY_UNAVAILABLE'], ['json', 502, 'BAD_GATEWAY'],
+      ['headers', 504, 'GATEWAY_TIMEOUT'], ['body', 504, 'GATEWAY_TIMEOUT']]) {
+      behavior = next;
+      const before = calls;
+      const result = await getJson(base, `/pedidos/${mode}`);
+      assert.equal(result.status, status);
+      assert.equal(result.body.error.code, code);
+      assert.equal(calls, before + 1);
+      assert.ok(!JSON.stringify(result.body).includes('privado'));
+    }
+  });
+}
+
+test('health independente; ready valida resposta da dados-api; rota desconhecida recebe 404', async t => {
   let calls = 0;
   const base = await setup(t, (req, res) => {
     calls++;
@@ -31,7 +105,7 @@ test('health independente; ready valida resposta da dados-api; rota futura não 
     status: 200, body: { status: 'ok', service: 'pedidos-api' }
   });
   assert.equal(calls, 1);
-  assert.equal((await getJson(base, '/pedidos/otimizado')).status, 404);
+  assert.equal((await getJson(base, '/desconhecida')).status, 404);
 });
 
 test('503 da dependência é traduzido sem repassar mensagens internas', async t => {

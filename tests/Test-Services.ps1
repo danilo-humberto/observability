@@ -81,7 +81,7 @@ try {
     $endpoint = Get-Endpoint $fresh
     Assert-Http $endpoint '/health' 200
     Assert-Http $endpoint '/ready' 200
-    Assert-Http $endpoint '/pedidos/lento' 404 'NOT_FOUND'
+    Assert-Http $endpoint '/desconhecida' 404 'NOT_FOUND'
     $freshSignature = Invoke-Sql $fresh $signatureSql
     if ((Invoke-Sql $fresh 'SELECT (SELECT count(*) FROM clients) || ''|'' || (SELECT count(*) FROM orders);') -ne '1000|10000') { throw 'Carga padrão inválida' }
     $dataId = (Invoke-Compose $fresh @('ps', '-q', 'dados-api') -join '').Trim()

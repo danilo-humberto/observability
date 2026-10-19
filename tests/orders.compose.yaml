@@ -1,0 +1,4 @@
+# Aplicado somente pelo teste isolado da Etapa 4. Não usar no ambiente principal.
+services:
+  postgres:
+    command: ["postgres", "-c", "log_statement=all", "-c", "log_parameter_max_length=0"]
