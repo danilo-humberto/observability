@@ -2,7 +2,7 @@
 
 ## Onde estamos e o que queremos mostrar
 
-Este documento distingue o que existe do que vamos construir. As Etapas 1 e 2 prepararam a organização, o PostgreSQL, o modelo e a carga inicial. A Etapa 3 implementou as APIs, comunicação HTTP e verificação do acesso ao banco. A Etapa 4 implementou as consultas N+1 e JOIN. A Etapa 5 acrescenta instrumentação de traces com OpenTelemetry e Jaeger. Métricas e testes de carga continuam planejados.
+As Etapas 1 e 2 prepararam a organização, o PostgreSQL, o modelo e a carga inicial. A Etapa 3 implementou as APIs e a comunicação HTTP. A Etapa 4 implementou N+1 e JOIN e a Etapa 5, traces com OpenTelemetry e Jaeger. A Etapa 6 acrescenta pg_stat_statements, postgres_exporter, Prometheus e Grafana. Testes de carga e comparação de desempenho continuam planejados para a Etapa 7.
 
 ## O caminho de uma requisição
 
@@ -15,18 +15,18 @@ flowchart LR
 
 A resposta volta pelo caminho inverso. Cada API é um serviço separado, com seu próprio processo, e elas conversam por HTTP. O OpenTelemetry acompanha esse percurso em traces enviados ao Jaeger.
 
-| Parte | Responsabilidade atual ou planejada |
+| Parte | Responsabilidade atual |
 | --- | --- |
 | pedidos-api | Recebe HTTP, verifica prontidão e encaminha cada busca de pedidos à dados-api, validando sua resposta. |
 | dados-api | Verifica o banco com `SELECT 1` em `/ready` e consulta pedidos com N+1 ou JOIN, usando pool de `pg`. |
 | PostgreSQL | Guarda clientes e pedidos e executa as consultas das duas versões. |
 | OpenTelemetry | Registra entradas HTTP, chamada com fetch e consultas SQL, propagando contexto entre APIs. |
 | Jaeger | Recebe OTLP/HTTP e mostra traces, com armazenamento temporário em memória. |
-| postgres_exporter | Consultar o PostgreSQL e disponibilizar seus números para coleta. |
-| Prometheus | Coletar esses números e guardar seu histórico. |
-| Grafana | Buscar os dados no Prometheus e mostrá-los em painéis. |
-| pg_stat_statements | Reunir estatísticas das consultas executadas no PostgreSQL. |
-| Docker Compose | Executa banco, duas APIs e Jaeger; ferramentas de métricas continuam planejadas. |
+| postgres_exporter | Consulta o PostgreSQL e disponibiliza seus números para coleta. |
+| Prometheus | Coleta esses números e guarda seu histórico. |
+| Grafana | Busca os dados no Prometheus e os mostra em painéis. |
+| pg_stat_statements | Reúne estatísticas das consultas executadas no PostgreSQL. |
+| Docker Compose | Executa banco, APIs, Jaeger e ferramentas de métricas; prepara a extensão em bancos novos e existentes. |
 
 Somente a `dados-api` acessa o banco durante o atendimento HTTP, usando o usuário `postgres` já criado na primeira inicialização do PostgreSQL. A pedidos-api não recebe credenciais do banco.
 
@@ -85,13 +85,19 @@ flowchart LR
     Grafana[Grafana] -->|Consulta o histórico| Prometheus
 ```
 
-O Prometheus buscará periodicamente as métricas disponibilizadas pelo exporter. O Grafana usará esse histórico para montar os painéis. Na Etapa 6, vamos escolher os números úteis ao experimento, os intervalos de coleta e os painéis.
+O Prometheus 3.15.0 coleta o postgres_exporter 0.20.1 a cada 5 segundos, com prazo de 3 segundos. Grafana 13.2.4 possui datasource e dashboard provisionados por arquivos e visualização anônima com papel Viewer, sem administrador inicial nem edição. Apenas Prometheus (9090) e Grafana (3002) publicam novas portas, em loopback e ajustáveis. O exporter permanece interno e usa `postgres` com a mesma senha local da dados-api; Prometheus e Grafana não recebem essa credencial.
+
+O histórico do Prometheus fica em `/tmp/prometheus`, na camada gravável do contêiner, com retenção de 24 horas e 256 MB. Stop/start preserva os arquivos; recriação e down/up perdem o histórico. Grafana também usa dados temporários e reprovisionamento. Isso é independente do volume persistente do banco. As APIs não dependem dos componentes de métricas para iniciar ou atender.
+
+O dashboard acompanha `up`, `pg_up`, conexões e contadores SQL de chamadas, tempo e linhas por queryid. Seletores permitem escolher consultas e período. Não há exportação de texto SQL como label nem métricas HTTP. Consultas internas também aparecem no coletor: o SQL de inspeção permite identificar apenas as estruturas da aplicação.
 
 ## Estatísticas das consultas
 
-O `pg_stat_statements` será habilitado no PostgreSQL para acompanhar, por exemplo, quantas vezes uma consulta foi executada e quanto tempo levou. Ele pode agrupar consultas com a mesma estrutura, mesmo quando os valores usados na busca mudam.
+O `pg_stat_statements` é carregado pelo comando de partida do PostgreSQL, com `compute_query_id=auto` e `pg_stat_statements.track=top`. O serviço `metrics-init`, usando a mesma imagem e credencial do banco, aguarda seu healthcheck e executa `CREATE EXTENSION IF NOT EXISTS` em `observability`. O exporter aguarda esse serviço terminar com sucesso; as APIs mantêm a dependência somente do banco. A ativação em volumes existentes requer recriar/reiniciar o PostgreSQL, preservando os dados e a carga original.
 
-Essas estatísticas ajudam a entender o conjunto de consultas executadas. Já os traces ajudam a acompanhar uma requisição específica. Na Etapa 6, vamos verificar quais estatísticas o exporter consegue fornecer e quais precisaremos consultar diretamente.
+O coletor nativo fornece chamadas, tempo de execução e linhas, além de tempos de leitura/escrita de blocos. Estes últimos não fazem parte do dashboard: não habilitamos medição de I/O nem interpretamos seus zeros como ausência de atividade. O coletor filtra por tempo acumulado acima do percentil 10 e limita a 100 consultas, portanto não oferece inventário completo. Séries ausentes aparecem como ausência de dados, sem preenchimento com zero.
+
+`observability/postgres-exporter/statements.sql` identifica as três estruturas SQL atuais por texto com espaços normalizados, retornando queryid dinâmico, chamadas, tempo, linhas e início das estatísticas. Os testes comparam snapshots por consulta, sem reset, e registram a janela UTC. O usuário administrativo é compartilhado, então filtrar apenas por usuário não separaria monitoramento e aplicação. Mudanças futuras no SQL exigem atualizar esse filtro. O dashboard usa amostras; `increase` estima variações, enquanto deltas SQL confirmam contagens exatas. Reset, descarte de entradas ou chamadas concorrentes às mesmas rotas invalidam uma comparação isolada. Não há ligação automática entre queryid e trace individual.
 
 ## Dados e execução
 
@@ -114,6 +120,6 @@ A geração usa SQL, sem bibliotecas externas ou aleatoriedade. O padrão é 1.0
 
 Reiniciar preserva os dados. Para gerar outra carga, usa-se outro nome de projeto Compose e outra porta, mantendo o volume anterior. Os comandos de execução, validação e encerramento estão no [README](../README.md). Não há recarga destrutiva nem mecanismo de evolução de esquema nesta etapa.
 
-O ambiente atual usa Docker Compose para banco, APIs e Jaeger. Os componentes de métricas serão incorporados na Etapa 6. O [README](../README.md) descreve execução, variáveis, contratos, falhas e validação.
+O ambiente atual usa Docker Compose para banco, APIs, Jaeger e métricas. O [README](../README.md) descreve execução, variáveis, contratos, leitura dos painéis, conferência SQL, falhas, reversão e validação.
 
 O [plano de implementação](plano-implementacao.md) mostra o que será feito e conferido em cada etapa.

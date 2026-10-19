@@ -1,0 +1,4 @@
+# Apenas para simular um banco anterior à Etapa 6; iniciar somente postgres.
+services:
+  postgres:
+    command: ["postgres"]

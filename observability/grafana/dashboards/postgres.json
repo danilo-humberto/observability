@@ -1,0 +1,393 @@
+{
+  "uid": "postgres-experiment",
+  "title": "PostgreSQL — N+1 e JOIN",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "timezone": "utc",
+  "refresh": "5s",
+  "tags": [
+    "etapa-6",
+    "postgresql"
+  ],
+  "time": {
+    "to": "now",
+    "from": "now-15m"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m"
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "query": "label_values(pg_stat_statements_calls_total{datname=\"observability\",user=\"postgres\"}, queryid)",
+        "label": "Consulta (queryid)",
+        "multi": true,
+        "refresh": 1,
+        "includeAll": true,
+        "name": "queryid",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "type": "query",
+        "datasource": {
+          "uid": "prometheus",
+          "type": "prometheus"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "gridPos": {
+        "h": 6,
+        "y": 0,
+        "w": 24,
+        "x": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Métricas amostradas a cada **5 s**. Selecione o período e o **queryid**; use `statements.sql` para identificar pedidos, cliente e JOIN. O coletor nativo seleciona consultas por tempo acumulado e limite: **série ausente significa ausência de dados, não zero**. `increase` estima a variação entre amostras; confira contagens exatas por snapshots SQL. Tempo SQL não é latência HTTP. Histórico temporário: recriar Prometheus apaga as métricas; parar/iniciar mantém. As estatísticas SQL podem ser mais antigas que o gráfico."
+      },
+      "type": "text",
+      "title": "Como interpretar",
+      "id": 1
+    },
+    {
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "legend": {
+          "placement": "bottom",
+          "displayMode": "list"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "id": 2,
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "type": "stat",
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "coleta",
+          "range": true,
+          "expr": "up{job=\"postgres\"}"
+        }
+      ],
+      "fieldConfig": {
+        "overrides": [],
+        "defaults": {
+          "noValue": "Sem dados",
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "title": "Coleta do exporter (1 = disponível)",
+      "gridPos": {
+        "h": 8,
+        "y": 6.0,
+        "w": 12,
+        "x": 0
+      }
+    },
+    {
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "legend": {
+          "placement": "bottom",
+          "displayMode": "list"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "id": 3,
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "type": "stat",
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "banco",
+          "range": true,
+          "expr": "pg_up{job=\"postgres\"}"
+        }
+      ],
+      "fieldConfig": {
+        "overrides": [],
+        "defaults": {
+          "noValue": "Sem dados",
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "title": "Banco acessível ao exporter (1 = sim)",
+      "gridPos": {
+        "h": 8,
+        "y": 6.0,
+        "w": 12,
+        "x": 12
+      }
+    },
+    {
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "legend": {
+          "placement": "bottom",
+          "displayMode": "list"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "id": 4,
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "type": "timeseries",
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "conexões",
+          "range": true,
+          "expr": "pg_stat_database_numbackends{job=\"postgres\",datname=\"observability\"}"
+        }
+      ],
+      "fieldConfig": {
+        "overrides": [],
+        "defaults": {
+          "noValue": "Sem dados",
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "title": "Conexões no banco (inclui monitoramento)",
+      "gridPos": {
+        "h": 8,
+        "y": 14.0,
+        "w": 12,
+        "x": 0
+      }
+    },
+    {
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "legend": {
+          "placement": "bottom",
+          "displayMode": "list"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "id": 5,
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "type": "timeseries",
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{queryid}}",
+          "range": true,
+          "expr": "pg_stat_statements_calls_total{job=\"postgres\",datname=\"observability\",user=\"postgres\",queryid=~\"${queryid:regex}\"}"
+        }
+      ],
+      "fieldConfig": {
+        "overrides": [],
+        "defaults": {
+          "noValue": "Sem dados",
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "title": "Execuções SQL acumuladas",
+      "gridPos": {
+        "h": 8,
+        "y": 14.0,
+        "w": 12,
+        "x": 12
+      }
+    },
+    {
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "legend": {
+          "placement": "bottom",
+          "displayMode": "list"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "id": 6,
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "type": "stat",
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{queryid}}",
+          "range": true,
+          "expr": "increase(pg_stat_statements_calls_total{job=\"postgres\",datname=\"observability\",user=\"postgres\",queryid=~\"${queryid:regex}\"}[$__range])"
+        }
+      ],
+      "fieldConfig": {
+        "overrides": [],
+        "defaults": {
+          "noValue": "Sem dados",
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "title": "Execuções estimadas no período",
+      "gridPos": {
+        "h": 8,
+        "y": 22.0,
+        "w": 12,
+        "x": 0
+      }
+    },
+    {
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "legend": {
+          "placement": "bottom",
+          "displayMode": "list"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "id": 7,
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "type": "timeseries",
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{queryid}}",
+          "range": true,
+          "expr": "pg_stat_statements_seconds_total{job=\"postgres\",datname=\"observability\",user=\"postgres\",queryid=~\"${queryid:regex}\"}"
+        }
+      ],
+      "fieldConfig": {
+        "overrides": [],
+        "defaults": {
+          "noValue": "Sem dados",
+          "unit": "s",
+          "min": 0
+        }
+      },
+      "title": "Tempo SQL acumulado",
+      "gridPos": {
+        "h": 8,
+        "y": 22.0,
+        "w": 12,
+        "x": 12
+      }
+    },
+    {
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "legend": {
+          "placement": "bottom",
+          "displayMode": "list"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "id": 8,
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "type": "timeseries",
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{queryid}}",
+          "range": true,
+          "expr": "pg_stat_statements_rows_total{job=\"postgres\",datname=\"observability\",user=\"postgres\",queryid=~\"${queryid:regex}\"}"
+        }
+      ],
+      "fieldConfig": {
+        "overrides": [],
+        "defaults": {
+          "noValue": "Sem dados",
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "title": "Linhas SQL acumuladas",
+      "gridPos": {
+        "h": 8,
+        "y": 30.0,
+        "w": 12,
+        "x": 0
+      }
+    }
+  ]
+}

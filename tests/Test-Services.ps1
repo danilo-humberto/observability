@@ -5,7 +5,7 @@ $composeArgs = @('--file', (Join-Path $repoRoot 'compose.yaml'), '--env-file', (
 $prefix = 'observability-api-test-' + [DateTime]::UtcNow.ToString('yyyyMMddHHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 6)
 $projects = [System.Collections.Generic.List[string]]::new()
 $savedEnv = @{}
-foreach ($key in @('POSTGRES_PASSWORD', 'POSTGRES_PORT', 'PEDIDOS_PORT', 'JAEGER_PORT', 'OTEL_TRACES_SAMPLER', 'CLIENTS_COUNT', 'ORDERS_COUNT', 'PGPOOL_MAX', 'PGCONNECT_TIMEOUT_MS', 'PGSTATEMENT_TIMEOUT_MS', 'HTTP_TIMEOUT_MS')) {
+foreach ($key in @('POSTGRES_PASSWORD', 'POSTGRES_PORT', 'PEDIDOS_PORT', 'JAEGER_PORT', 'PROMETHEUS_PORT', 'GRAFANA_PORT', 'OTEL_TRACES_SAMPLER', 'CLIENTS_COUNT', 'ORDERS_COUNT', 'PGPOOL_MAX', 'PGCONNECT_TIMEOUT_MS', 'PGSTATEMENT_TIMEOUT_MS', 'HTTP_TIMEOUT_MS')) {
     $savedEnv[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
 }
 
@@ -57,6 +57,8 @@ try {
     $env:POSTGRES_PORT = '0'
     $env:PEDIDOS_PORT = '0'
     $env:JAEGER_PORT = '0'
+    $env:PROMETHEUS_PORT = '0'
+    $env:GRAFANA_PORT = '0'
     $env:OTEL_TRACES_SAMPLER = 'parentbased_always_on'
     $env:CLIENTS_COUNT = '1000'
     $env:ORDERS_COUNT = '10000'
@@ -73,7 +75,7 @@ try {
     }
     Invoke-Compose "$prefix-config" @('config', '--quiet') | Out-Null
     $services = @(Invoke-Compose "$prefix-config" @('config', '--services'))
-    if (@(Compare-Object ($services | Sort-Object) @('dados-api', 'jaeger', 'pedidos-api', 'postgres')).Count -ne 0) { throw 'O Compose deve conter banco, duas APIs e Jaeger' }
+    if (@(Compare-Object ($services | Sort-Object) @('dados-api', 'grafana', 'jaeger', 'metrics-init', 'pedidos-api', 'postgres', 'postgres-exporter', 'prometheus')).Count -ne 0) { throw 'O Compose deve conter banco, APIs, traces e métricas' }
     Write-Host 'PASS configuração válida e rejeição de credenciais ausentes'
 
     $signatureSql = Get-Content -Raw (Join-Path $PSScriptRoot 'database-signature.sql')

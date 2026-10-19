@@ -4,7 +4,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $composeArgs = @('--file', (Join-Path $repoRoot 'compose.yaml'), '--file', (Join-Path $PSScriptRoot 'tracing.compose.yaml'), '--env-file', (Join-Path $repoRoot '.env.example'))
 $project = 'observability-tracing-test-' + [DateTime]::UtcNow.ToString('yyyyMMddHHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 6)
 $savedEnv = @{}
-foreach ($key in @('POSTGRES_PASSWORD', 'POSTGRES_PORT', 'PEDIDOS_PORT', 'JAEGER_PORT', 'CLIENTS_COUNT', 'ORDERS_COUNT', 'PGPOOL_MAX', 'PGCONNECT_TIMEOUT_MS', 'PGSTATEMENT_TIMEOUT_MS', 'OTEL_TRACES_SAMPLER', 'TEST_SECRET', 'TRACE_TEST_BATCH_DELAY')) {
+foreach ($key in @('POSTGRES_PASSWORD', 'POSTGRES_PORT', 'PEDIDOS_PORT', 'JAEGER_PORT', 'PROMETHEUS_PORT', 'GRAFANA_PORT', 'CLIENTS_COUNT', 'ORDERS_COUNT', 'PGPOOL_MAX', 'PGCONNECT_TIMEOUT_MS', 'PGSTATEMENT_TIMEOUT_MS', 'OTEL_TRACES_SAMPLER', 'TEST_SECRET', 'TRACE_TEST_BATCH_DELAY')) {
     $savedEnv[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
 }
 function Invoke-Compose {
@@ -24,6 +24,8 @@ try {
     $env:POSTGRES_PORT = '0'
     $env:PEDIDOS_PORT = '0'
     $env:JAEGER_PORT = '0'
+    $env:PROMETHEUS_PORT = '0'
+    $env:GRAFANA_PORT = '0'
     $env:CLIENTS_COUNT = '1000'
     $env:ORDERS_COUNT = '10000'
     $env:PGPOOL_MAX = '10'

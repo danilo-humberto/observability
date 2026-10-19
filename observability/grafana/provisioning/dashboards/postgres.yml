@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: Experimento PostgreSQL
+    orgId: 1
+    folder: Experimento
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards

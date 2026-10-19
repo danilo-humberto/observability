@@ -6,7 +6,7 @@ Projeto para o seminário de Sistemas Distribuídos do IFPE. Vamos mostrar como 
 
 ## Onde estamos
 
-A Etapa 5 acrescenta **traces distribuídos com OpenTelemetry e Jaeger** às rotas N+1 e JOIN. As APIs Node.js 22, TypeScript e Express 5, o PostgreSQL e o Jaeger iniciam pelo mesmo Docker Compose. Métricas, estatísticas agregadas e testes de carga continuam nas etapas seguintes. O repositório Git já está inicializado.
+A Etapa 6 acrescenta **métricas e estatísticas SQL** aos traces distribuídos da Etapa 5. O mesmo Docker Compose inicia PostgreSQL, APIs, Jaeger, postgres_exporter, Prometheus e Grafana. A contagem SQL é conferida com chamadas controladas; testes de carga e comparação de desempenho ficam na Etapa 7. O repositório Git já está inicializado.
 
 ## Executar o ambiente completo
 
@@ -39,7 +39,7 @@ O padrão é 1.000 clientes e 10.000 pedidos. A pedidos-api fica em `127.0.0.1:3
 
 A sequência é PostgreSQL saudável → dados-api pronta → pedidos-api pronta. A dados-api usa o usuário `postgres` e a mesma `POSTGRES_PASSWORD` já configurada para o banco. Não existe etapa de criação de usuário ou concessão de permissões na partida.
 
-Essa escolha simplifica a apresentação local, mas dá à dados-api permissões administrativas no banco. A pedidos-api não recebe credenciais do PostgreSQL. As APIs continuam executando como usuário não root nos contêineres.
+Essa escolha simplifica a apresentação local, mas dá à dados-api permissões administrativas no banco. O exporter e o serviço de preparação da extensão também usam esse administrador e a mesma senha, conforme a decisão para a apresentação local. A pedidos-api, o Prometheus e o Grafana não recebem credenciais do PostgreSQL. As APIs continuam executando como usuário não root nos contêineres.
 
 ### Rotas e falhas
 
@@ -234,6 +234,50 @@ O teste usa PostgreSQL, APIs e Jaeger reais em projeto isolado, portas livres e 
 
 As suítes anteriores continuam válidas; `Test-Orders.ps1` e `Test-Services.ps1` agora também iniciam Jaeger com porta livre. Nenhum desses testes mede ganho de desempenho.
 
+## Métricas e estatísticas SQL — Etapa 6
+
+Abra [Grafana local](http://127.0.0.1:3002/d/postgres-experiment) e [Prometheus local](http://127.0.0.1:9090). `GRAFANA_PORT` e `PROMETHEUS_PORT` alteram as portas, publicadas somente em loopback. O exporter atende em `postgres-exporter:9187` apenas na rede Docker. Grafana permite visualização anônima com papel **Viewer**, sem criação do administrador inicial, formulário de login ou cadastro. Dashboard e datasource são provisionados por arquivos; não é necessário importar painéis nem instalar plugins.
+
+O Prometheus coleta a cada 5 segundos, com timeout de 3 segundos. Seu histórico fica no sistema de arquivos do contêiner, em `/tmp/prometheus`, sem volume persistente, limitado por retenção de 24 horas e tamanho de 256 MB (não é um teto rígido de disco). `stop` seguido de `start` preserva esse histórico; recriar o contêiner ou executar `down` e outro `up` o perde. O Grafana também usa dados temporários e reprovisiona os arquivos ao iniciar. Os dados e as estatísticas do PostgreSQL têm ciclo de vida separado: perder o histórico do Prometheus **não zera** os contadores SQL.
+
+Na primeira aplicação da Etapa 6 a um ambiente existente, o Compose recria o PostgreSQL para habilitar `shared_preload_libraries=pg_stat_statements`. Isso interrompe temporariamente as APIs locais. Em seguida, `metrics-init` executa `CREATE EXTENSION IF NOT EXISTS pg_stat_statements` no banco `observability`, inclusive em volumes já inicializados. O estado `Exited (0)` desse serviço é esperado. Não há recarga das tabelas, alteração de senha ou criação de usuários. As APIs não dependem dele nem dos componentes de métricas.
+
+O painel mostra disponibilidade da coleta (`up`), acesso ao banco (`pg_up`), conexões do banco (`pg_stat_database_numbackends`) e, por `queryid`, execuções (`pg_stat_statements_calls_total`), tempo SQL em segundos (`pg_stat_statements_seconds_total`) e linhas (`pg_stat_statements_rows_total`). Conexões incluem APIs, exporter e outras sessões; não representam requisições HTTP. O exporter limita conexão a 1 segundo e coleta a 2 segundos. Se não conseguir concluir a resposta antes do prazo do Prometheus, `up=0` e `pg_up` pode ficar ausente; se conseguir informar a falha, `pg_up=0`. Confira os dois sinais.
+
+O coletor nativo `stat_statements` é habilitado explicitamente, sem texto SQL nos labels. Ele seleciona consultas acima do percentil 10 de tempo acumulado e limita a saída a 100 consultas. Assim, **série ausente é ausência de dados, não zero execuções**. O painel permite selecionar queryids, mas também lista consultas internas; o SQL abaixo identifica somente as três estruturas atuais da aplicação. Não fixe esses identificadores entre versões ou ambientes. [Implementação do coletor 0.20.1](https://github.com/prometheus-community/postgres_exporter/blob/v0.20.1/collector/pg_stat_statements.go).
+
+### Conferir uma janela sem misturar contagens anteriores
+
+Use um ambiente sem outras chamadas às rotas durante a conferência. Probes e consultas do exporter continuam acontecendo, mas o filtro SQL abaixo não as inclui. Antes da primeira chamada, a inspeção pode não retornar linhas: a estrutura ainda não foi executada.
+
+```powershell
+# Snapshot anterior (o SQL só lê estatísticas; não executa reset).
+Get-Date -AsUTC -Format o
+Get-Content -Raw observability/postgres-exporter/statements.sql |
+    docker compose -p observability exec -T postgres psql -X -U postgres -d observability -v ON_ERROR_STOP=1
+
+Invoke-RestMethod 'http://127.0.0.1:3000/pedidos/lento?limit=100' | Out-Null
+
+# Snapshot posterior. Registre também: rota=lento, limit=100, chamadas=1.
+Get-Date -AsUTC -Format o
+Get-Content -Raw observability/postgres-exporter/statements.sql |
+    docker compose -p observability exec -T postgres psql -X -U postgres -d observability -v ON_ERROR_STOP=1
+```
+
+Subtraia `calls` anterior de posterior para cada `kind`: `pedidos` deve aumentar 1 e `cliente`, 100. Uma consulta ausente no snapshot anterior vale zero para essa conferência inicial. Repita os dois snapshots envolvendo uma chamada a `/pedidos/otimizado?limit=100`: somente `join` deve aumentar 1. O campo `stats_since` deve permanecer igual nas entradas já existentes; reset ou descarte de estatísticas invalida a comparação. A suíte automatizada verifica esses deltas, imprime início/fim em UTC e compara as respostas completas. Não execute `pg_stat_statements_reset()` no ambiente compartilhado para preparar a demonstração.
+
+No Grafana, selecione o período e os queryids encontrados. Aguarde pelo menos duas coletas. O painel com `increase` **estima** o crescimento entre amostras, podendo mostrar valores fracionários; os snapshots SQL dão a contagem exata. Acumulados abrangem o histórico das estatísticas SQL, e não apenas o intervalo selecionado no gráfico. Tempo SQL não inclui todo o percurso HTTP e não equivale à latência da API. O custo do monitoramento e o ganho de desempenho não foram medidos nesta etapa.
+
+### Validação e reversão
+
+```powershell
+pwsh -NoProfile -File tests/Test-Metrics.ps1
+```
+
+A suíte usa PostgreSQL, exporter, Prometheus e Grafana reais, projetos únicos, portas livres e senha efêmera. Somente nela, o prazo HTTP é ampliado para 30 segundos, pois verifica estatísticas e não desempenho; o ambiente principal continua com 3 segundos. Testa volume anterior à extensão e volume novo, idempotência, deltas SQL, evolução de amostras, valores de tempo/linhas, datasource, acesso Viewer sem gravação, falhas/recuperação, independência das APIs, privacidade e perda do histórico na recriação. Encerra seus contêineres e preserva volumes do banco. A opção `-KeepRunning` mantém somente o ambiente novo após sucesso para inspeção manual; ao terminar use `docker compose -p NOME_IMPRESSO down`. Sem `.env`, defina `POSTGRES_PASSWORD` no processo com um valor fictício não vazio apenas para satisfazer a interpolação desse comando: `down` não autentica no banco. A senha efêmera do teste não é impressa nem necessária para encerrá-lo.
+
+Para reverter a Etapa 6, remova os serviços de métricas e a configuração de preload do Compose, restaure os overrides correspondentes e recrie os contêineres afetados com `up -d --build --wait --remove-orphans`. Não remova volumes. Isso interrompe o banco e perde o histórico temporário do Prometheus. A extensão pode permanecer instalada e inativa, sem apagar tabelas ou executar `DROP EXTENSION`.
+
 ## Como as partes se conectam
 
 O caminho de `/ready` já é `cliente HTTP → pedidos-api → dados-api → PostgreSQL`.
@@ -244,7 +288,7 @@ O caminho de `/ready` já é `cliente HTTP → pedidos-api → dados-api → Pos
 - **OpenTelemetry e Jaeger:** ajudam a acompanhar uma requisição pelos serviços e pelas consultas ao banco. Esse registro do percurso é chamado de trace.
 - **postgres_exporter, Prometheus e Grafana:** coletam e mostram números do banco ao longo do tempo, chamados de métricas.
 - **pg_stat_statements:** reúne estatísticas das consultas, como quantas vezes foram executadas e quanto tempo levaram.
-- **Docker Compose:** inicia banco, APIs e Jaeger; os componentes de métricas serão integrados na Etapa 6.
+- **Docker Compose:** inicia banco, APIs, Jaeger e componentes de métricas, incluindo a preparação idempotente da extensão.
 
 O documento de [arquitetura](docs/arquitetura.md) explica melhor o papel de cada parte.
 
@@ -284,4 +328,4 @@ As pastas ainda vazias têm um arquivo `.gitkeep` para que possam ser incluídas
 
 O [plano de implementação](docs/plano-implementacao.md) descreve as oito etapas e como conferir cada entrega. Só vamos começar uma nova etapa depois da autorização do usuário. As orientações para os agentes estão em [AGENTS.md](AGENTS.md).
 
-O PostgreSQL está fixado em 18.6, as imagens das APIs usam Node.js 22.23.1 Alpine e o Jaeger usa 2.22.0. As dependências diretas têm versões exatas e os lockfiles são versionados. Os demais componentes de observabilidade serão definidos na Etapa 6.
+O PostgreSQL está fixado em 18.6, as imagens das APIs usam Node.js 22.23.1 Alpine e o Jaeger usa 2.22.0. O postgres_exporter usa 0.20.1, Prometheus 3.15.0 e Grafana 13.2.4. As dependências diretas têm versões exatas e os lockfiles são versionados.
