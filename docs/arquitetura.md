@@ -2,7 +2,7 @@
 
 ## Onde estamos e o que queremos mostrar
 
-Este documento distingue o que existe do que vamos construir. A Etapa 1 preparou pastas e documentação; a Etapa 2 implementa o PostgreSQL, o modelo e a carga inicial. As APIs e a observabilidade abaixo ainda são planejadas. Queremos mostrar o problema N+1 com consultas reais ao PostgreSQL e comparar o resultado com uma consulta usando JOIN.
+Este documento distingue o que existe do que vamos construir. As Etapas 1 e 2 prepararam a organização, o PostgreSQL, o modelo e a carga inicial. A Etapa 3 implementa as APIs, comunicação HTTP e verificação do acesso ao banco. As consultas N+1 e JOIN e a observabilidade ainda são planejadas.
 
 ## O caminho de uma requisição
 
@@ -13,12 +13,12 @@ flowchart LR
     Dados -->|SQL via pg| Banco[(PostgreSQL)]
 ```
 
-A resposta volta pelo caminho inverso. Cada API será um serviço separado, com seu próprio processo. Elas vão conversar por HTTP, o que nos permitirá acompanhar uma requisição passando de um serviço para o outro.
+A resposta volta pelo caminho inverso. Cada API é um serviço separado, com seu próprio processo, e elas conversam por HTTP. A instrumentação para acompanhar esse percurso em traces virá na Etapa 5.
 
 | Parte | Responsabilidade atual ou planejada |
 | --- | --- |
-| pedidos-api | Receber a requisição pública, chamar a dados-api e devolver a resposta. |
-| dados-api | Fazer as consultas SQL com `pg` e devolver os dados à pedidos-api. |
+| pedidos-api | Já recebe HTTP, responde `/health` e chama `/ready` da dados-api; consultas de pedidos virão na Etapa 4. |
+| dados-api | Já responde `/health` e verifica o banco com `SELECT 1` em `/ready`, usando pool de `pg`. |
 | PostgreSQL | Já guarda clientes e pedidos; as consultas das duas versões virão na Etapa 4. |
 | OpenTelemetry | Registrar as operações e levar as informações que ligam uma chamada à outra. |
 | Jaeger | Receber e mostrar o percurso das requisições, chamado de trace. |
@@ -26,9 +26,15 @@ A resposta volta pelo caminho inverso. Cada API será um serviço separado, com 
 | Prometheus | Coletar esses números e guardar seu histórico. |
 | Grafana | Buscar os dados no Prometheus e mostrá-los em painéis. |
 | pg_stat_statements | Reunir estatísticas das consultas executadas no PostgreSQL. |
-| Docker Compose | Já executa somente o banco; os outros contêineres virão nas etapas seguintes. |
+| Docker Compose | Já executa o banco e as duas APIs; observabilidade virá depois. |
 
-Somente a `dados-api` acessará o banco. Na Etapa 3, vamos definir portas, rotas internas, limites de espera por resposta e como lidar com falhas de comunicação.
+Somente a `dados-api` acessa o banco durante o atendimento HTTP, usando o usuário `postgres` já criado na primeira inicialização do PostgreSQL. A pedidos-api não recebe credenciais do banco.
+
+As APIs usam Node.js 22.23.1, TypeScript compilado em ESM e Express 5. Cada uma tem pacote e lockfile próprios, sem workspaces. Configuração, aplicação HTTP e inicialização são separadas; a dados-api possui módulo de acesso ao banco e a pedidos-api possui cliente HTTP com `fetch` nativo.
+
+O comando `docker compose -p observability up --build -d --wait` constrói e inicia tudo. A sequência é banco saudável → dados-api pronta → pedidos-api pronta. A pedidos-api é publicada em loopback na porta 3000, ajustável; a dados-api usa 3001 apenas na rede interna. `/health` indica processo vivo e `/ready` verifica dependências. Na pedidos-api, `/ready` percorre os dois serviços até `SELECT 1` no banco.
+
+A dados-api retorna 503 quando o banco falha. A pedidos-api retorna 503 para dependência não pronta, 502 para comunicação/resposta inválida e 504 para timeout. Os erros têm `error.code` e `error.message`, sem detalhes internos. O pool tem 10 conexões, aquisição/conexão limitada a 1 segundo, SQL a 1 segundo por consulta e HTTP a 3 segundos incluindo o corpo, configuráveis. Não existem retries automáticos. Uma dependência indisponível não derruba o processo: ele pode recuperar prontidão quando ela voltar. Os limites serão revistos antes da Etapa 4.
 
 ## As versões lenta e otimizada
 
@@ -88,7 +94,9 @@ O banco implementado tem duas tabelas:
 
 Todos os campos são obrigatórios. A chave estrangeira de `orders.client_id` referencia `clients.id`, impede pedidos sem cliente e bloqueia a exclusão de clientes com pedidos. Há um índice em `orders.client_id`. `amount` não aceita números negativos. Não existem outras entidades ou regras de negócio nesta etapa.
 
-O Compose executa `postgres:18.6-alpine`, publica somente `127.0.0.1:${POSTGRES_PORT:-5432}` e mantém um volume por projeto montado em `/var/lib/postgresql`. A senha precisa ser configurada localmente; banco e usuário administrativo são `observability` e `postgres`. Isso prepara um ambiente didático local, não uma configuração de produção ou credenciais para as futuras APIs.
+O Compose executa `postgres:18.6-alpine`, publica o banco em `127.0.0.1:${POSTGRES_PORT:-5432}` e mantém um volume por projeto montado em `/var/lib/postgresql`. Banco e usuário são `observability` e `postgres`. A mesma `POSTGRES_PASSWORD` configura o banco e o acesso da dados-api, simplificando a apresentação local. Isso dá à dados-api permissões administrativas no PostgreSQL. As APIs não executam como root nos contêineres.
+
+Não há provisionamento de usuários na partida. Repetir o Compose reutiliza o banco persistente e não recria usuários ou registros. Alterar a senha no `.env` não altera a credencial já armazenada no volume. Um usuário `dados_api` criado pela configuração anterior pode permanecer no banco, mas não é mais utilizado; a simplificação não remove usuários de volumes existentes.
 
 Na primeira inicialização, `database/init/00-init.sh` valida as quantidades e chama o `psql` com `ON_ERROR_STOP` e `--single-transaction` para executar modelo e carga juntos. A transação protege tabelas e registros da aplicação; a criação do diretório do PostgreSQL pela imagem ocorre antes dela. Por isso, um volume cuja inicialização falhou não deve ser reaproveitado como carga válida.
 
@@ -96,6 +104,6 @@ A geração usa SQL, sem bibliotecas externas ou aleatoriedade. O padrão é 1.0
 
 Reiniciar preserva os dados. Para gerar outra carga, usa-se outro nome de projeto Compose e outra porta, mantendo o volume anterior. Os comandos de execução, validação e encerramento estão no [README](../README.md). Não há recarga destrutiva nem mecanismo de evolução de esquema nesta etapa.
 
-O ambiente completo usará Docker Compose nas próximas etapas. Versões e configurações das APIs e da observabilidade ainda serão escolhidas.
+O ambiente atual já usa Docker Compose para banco e APIs. Os componentes de observabilidade serão incorporados nas etapas correspondentes. O [README](../README.md) descreve execução, variáveis, contratos, falhas e validação.
 
 O [plano de implementação](plano-implementacao.md) mostra o que será feito e conferido em cada etapa.

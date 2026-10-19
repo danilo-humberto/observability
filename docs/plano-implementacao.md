@@ -6,7 +6,7 @@ Cada etapa precisa de autorização do usuário. Antes de começar, vamos aprese
 
 Ao terminar, vamos explicar o que mudou, as decisões tomadas, os comandos usados nas verificações, os resultados e as pendências. Depois, vamos parar e pedir autorização para continuar.
 
-Este plano descreve o trabalho por etapas. A Etapa 1 entregou pastas e documentação. A Etapa 2 foi autorizada para implementar somente o banco e os dados; as etapas seguintes continuam dependendo de autorização própria.
+Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organização, banco e dados. A Etapa 3 foi autorizada para implementar as APIs e o ambiente com comando único; as etapas seguintes continuam dependendo de autorização própria.
 
 ## Etapa 1 — Pastas e documentação inicial
 
@@ -23,9 +23,12 @@ Este plano descreve o trabalho por etapas. A Etapa 1 entregou pastas e documenta
 
 ## Etapa 3 — APIs Node.js e comunicação HTTP
 
-- **O que fazer:** criar os dois serviços, fazer a pedidos-api chamar a dados-api por HTTP, conectar a dados-api ao banco e incluir os serviços no ambiente de execução. Antes disso, definir versões, biblioteca HTTP, rotas internas, limites de espera por resposta e tratamento de falhas.
+- **Decisões aprovadas (simplificadas em 19/10/2026):** Node.js 22, TypeScript, Express 5, `fetch` nativo e `pg` com pool, pacotes npm separados sem workspaces. Um comando Compose constrói e inicia banco e APIs; execução direta no Windows fica fora do escopo. Para a apresentação local, a dados-api usa o usuário administrativo `postgres` e a senha já configurada no banco, sem provisionamento ou credencial adicional. Usuários e dados existentes são preservados.
+- **Implementação:** `/health` verifica o processo e `/ready` verifica dependências; pedidos-api chama dados-api, que executa `SELECT 1`. Pedidos publicada em loopback e dados-api apenas na rede interna. Erros seguros 503/502/504, limites configuráveis e encerramento gracioso. Rotas de pedidos e instrumentação permanecem para as próximas etapas.
+- **Simplificação validada em 19/10/2026:** removidos o script e o contêiner de provisionamento e a variável `APP_DB_PASSWORD`. A dados-api passa a usar `postgres` com `POSTGRES_PASSWORD`, com privilégios administrativos aceitos para esta apresentação local. `./tests/Test-Unit.ps1` passou com 19 testes; `./tests/Test-Services.ps1` passou com três serviços, acesso real, timeout SQL, preservação de registros e senha ao repetir a partida, falhas/recuperação e banco existente sem criação de usuários. `./tests/Test-Database.ps1` também passou novamente. As suítes validaram compilação e configuração do Compose. Contêineres de teste encerrados e volumes preservados. O usuário de leitura antigo, se existir em algum volume, é preservado e não é mais utilizado.
 - **Como conferir:** testar a comunicação real entre os serviços, a conexão com o banco e a resposta quando a dados-api estiver indisponível ou demorar além do limite de espera, chamado de timeout.
 - **Quando termina:** os serviços executam, conversam por HTTP e tratam as falhas básicas. As rotas N+1 e JOIN ficam para a próxima etapa.
+- **Validação da implementação anterior, em 18/10/2026 (incluía o provisionamento agora removido):** `./tests/Test-Unit.ps1` passou com 19 testes dentro do Docker (4 na dados-api e 15 na pedidos-api), incluindo configuração inválida, respostas HTTP inválidas, timeout antes dos headers e durante o corpo e SIGTERM com requisição ativa na pedidos-api. `./tests/Test-Services.ps1` passou com PostgreSQL e APIs reais: comando único, volume novo e banco já inicializado, repetição sem alterar registros ou senha, usuário não root, isolamento de portas e credenciais, leitura permitida, escrita e DDL recusados, timeout SQL, parada/recuperação das dependências e bloqueio da partida por senha, SELECT ausente ou UPDATE por coluna incompatíveis. Logs verificados sem as credenciais válidas e inválida usadas no teste. `./tests/Test-Database.ps1` passou novamente; `docker compose config --quiet` e compilação TypeScript passaram nas suítes. Todos os contêineres de integração foram encerrados, com volumes preservados. Não foram medidos N+1, JOIN, traces ou desempenho. O encerramento da dados-api com consulta SQL longa em andamento não foi exercitado.
 
 ## Etapa 4 — Rotas lenta e otimizada
 
@@ -59,4 +62,4 @@ Este plano descreve o trabalho por etapas. A Etapa 1 entregou pastas e documenta
 
 ## Próxima etapa
 
-A Etapa 3 depende de autorização. Antes de implementar as APIs, vamos alinhar versões de Node.js e dependências, biblioteca HTTP, rotas internas, timeouts, credenciais de acesso ao banco e comportamento de falhas. Não implementar os endpoints N+1 e JOIN antecipadamente.
+A próxima etapa de funcionalidades é a Etapa 4, que depende de autorização própria. Antes de implementar, definir contratos JSON das rotas lenta e otimizada, validação de `limit`, ordenação e revisão dos timeouts para o experimento. Não antecipar consultas N+1 e JOIN na Etapa 3.

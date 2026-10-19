@@ -32,7 +32,7 @@ function Start-Scenario {
     $env:ORDERS_COUNT = $Orders
     $project = "$prefix-$Name"
     $projects.Add($project)
-    Invoke-Compose $project @('up', '-d', '--wait', '--wait-timeout', '60') | Out-Null
+    Invoke-Compose $project @('up', '-d', '--wait', '--wait-timeout', '60', 'postgres') | Out-Null
     return $project
 }
 
@@ -94,7 +94,7 @@ try {
     Write-Host 'PASS integridade, NOT NULL, valor não negativo e exclusão sem cascata'
 
     Invoke-Compose $first @('restart', 'postgres') | Out-Null
-    Invoke-Compose $first @('up', '-d', '--wait', '--wait-timeout', '60') | Out-Null
+    Invoke-Compose $first @('up', '-d', '--wait', '--wait-timeout', '60', 'postgres') | Out-Null
     if ((Invoke-Sql $first $signatureSql) -ne $signature) { throw 'Reinício alterou os dados' }
     Write-Host 'PASS persistência após reinício'
 
@@ -123,7 +123,7 @@ try {
         $projects.Add($project)
         $env:CLIENTS_COUNT = $case[1]
         $env:ORDERS_COUNT = $case[2]
-        $output = & docker compose @composeArgs --project-name $project up -d --wait --wait-timeout 30 2>&1
+        $output = & docker compose @composeArgs --project-name $project up -d --wait --wait-timeout 30 postgres 2>&1
         if ($LASTEXITCODE -eq 0) { throw "Parâmetro inválido aceito: $($case[0])" }
         $logs = Invoke-Compose $project @('logs', '--no-color', 'postgres')
         if (($logs -join "`n") -notmatch 'COUNT deve ser um inteiro') {

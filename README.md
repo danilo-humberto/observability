@@ -6,26 +6,76 @@ Projeto para o seminário de Sistemas Distribuídos do IFPE. Vamos mostrar como 
 
 ## Onde estamos
 
-A Etapa 1 preparou as pastas e a documentação. A Etapa 2 entrega **PostgreSQL 18.6 executável com Docker Compose**, modelo relacional e dados reproduzíveis. As APIs e as ferramentas de observabilidade ainda estão planejadas. O repositório Git já está inicializado.
+A Etapa 3 acrescenta **duas APIs Node.js 22, TypeScript e Express 5**, comunicação HTTP, acesso ao PostgreSQL com `pg` e tratamento básico de falhas. PostgreSQL e APIs iniciam pelo mesmo Docker Compose. As consultas N+1 e JOIN e as ferramentas de observabilidade continuam planejadas. O repositório Git já está inicializado.
 
-## Executar o banco
+## Executar o ambiente completo
 
-Requisitos: Docker com suporte a contêineres Linux e Docker Compose. Os comandos abaixo usam PowerShell e devem ser executados na raiz do projeto.
+Requisitos: Docker com suporte a contêineres Linux e Docker Compose atualizado, com suporte a `--wait`. Não é necessário instalar Node.js no Windows. Os comandos abaixo usam PowerShell e devem ser executados na raiz do projeto; os scripts de testes requerem PowerShell 7.
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Edite `.env` e preencha `POSTGRES_PASSWORD` com uma senha local. Não repita a cópia se já tiver um `.env` configurado. Ele está ignorado pelo Git. Senhas que contenham `$` devem ficar entre aspas simples no arquivo. Não publique a saída de `docker compose config` sem `--quiet`, pois ela inclui a senha interpolada.
+Edite `.env` e preencha `POSTGRES_PASSWORD` com uma senha local. Se já tiver um `.env` configurado, mantenha a senha do banco existente. O arquivo está ignorado pelo Git. Senhas que contenham `$` ou `#` devem ficar entre aspas simples no arquivo. Não publique a saída de `docker compose config` sem `--quiet`, pois ela inclui a senha interpolada.
+
+Depois dessa configuração inicial, um comando constrói as imagens e inicia todo o sistema:
 
 ```powershell
-docker compose -p observability config --quiet
-docker compose -p observability up -d --wait --wait-timeout 60
+docker compose -p observability up --build -d --wait
+```
+
+Para conferir:
+
+```powershell
 docker compose -p observability ps
+Invoke-RestMethod http://127.0.0.1:3000/health
+Invoke-RestMethod http://127.0.0.1:3000/ready
 docker compose -p observability exec postgres psql -U postgres -d observability -c "SELECT (SELECT count(*) FROM clients) AS clients, (SELECT count(*) FROM orders) AS orders;"
 ```
 
-O padrão é 1.000 clientes e 10.000 pedidos. O banco fica acessível em `127.0.0.1:5432`, com banco `observability` e usuário administrativo `postgres`. `POSTGRES_PORT` permite escolher outra porta local. Este ambiente é didático e local; as credenciais da futura API serão tratadas na Etapa 3.
+O padrão é 1.000 clientes e 10.000 pedidos. A pedidos-api fica em `127.0.0.1:3000` (`PEDIDOS_PORT` altera essa porta). A dados-api usa a porta 3001 somente na rede interna do Docker. O banco continua acessível em `127.0.0.1:5432` (`POSTGRES_PORT` altera essa porta), com banco `observability` e administrador `postgres`. Este é um ambiente didático local.
+
+### Inicialização e credenciais
+
+A sequência é PostgreSQL saudável → dados-api pronta → pedidos-api pronta. A dados-api usa o usuário `postgres` e a mesma `POSTGRES_PASSWORD` já configurada para o banco. Não existe etapa de criação de usuário ou concessão de permissões na partida.
+
+Essa escolha simplifica a apresentação local, mas dá à dados-api permissões administrativas no banco. A pedidos-api não recebe credenciais do PostgreSQL. As APIs continuam executando como usuário não root nos contêineres.
+
+### Rotas e falhas
+
+| Rota | Verificação |
+| --- | --- |
+| `/health` nas duas APIs | Processo HTTP vivo, sem consultar dependências. |
+| `/ready` na dados-api | Consulta real `SELECT 1` ao PostgreSQL. |
+| `/ready` na pedidos-api | Chamada HTTP à dados-api, que consulta o banco. |
+
+O sucesso retorna `{"status":"ok","service":"pedidos-api"}` ou `dados-api`, conforme o serviço. Erros usam `{"error":{"code":"CODIGO","message":"Mensagem segura"}}`.
+
+Na dados-api, falha do banco retorna `503 DATABASE_UNAVAILABLE`. Na pedidos-api: dependência não pronta retorna `503 DEPENDENCY_UNAVAILABLE`; falha de conexão ou resposta inválida retorna `502 BAD_GATEWAY`; prazo excedido retorna `504 GATEWAY_TIMEOUT`. Rotas desconhecidas retornam `404 NOT_FOUND`; erros inesperados recebem `500 INTERNAL_ERROR`. As rotas de pedidos ainda não existem.
+
+Ao parar a dados-api, o Docker pode recusar a conexão ou demorar na resolução do nome interno. Por isso, a falha real pode aparecer como 502 ou 504, conforme a conexão falhe antes ou depois do prazo configurado.
+
+| Variável no `.env` | Padrão | Finalidade |
+| --- | --- | --- |
+| `PGPOOL_MAX` | 10 | Máximo de conexões reutilizáveis da dados-api. |
+| `PGCONNECT_TIMEOUT_MS` | 1000 | Prazo para adquirir/abrir conexão. |
+| `PGSTATEMENT_TIMEOUT_MS` | 1000 | Limite de execução SQL no servidor, por consulta. |
+| `HTTP_TIMEOUT_MS` | 3000 | Prazo HTTP incluindo leitura do corpo. |
+
+Os limites devem ser inteiros positivos. Não há retries automáticos ou esperas artificiais nas APIs. Healthchecks consultam `/ready`; `depends_on` ordena a partida, mas não reinicia automaticamente APIs quando uma dependência falha depois. Os processos continuam vivos e podem se recuperar quando a dependência volta. Limites do healthcheck são fixos para esta etapa e precisarão ser alinhados se os timeouts forem aumentados.
+
+Ao encerrar, as APIs deixam de aceitar novas conexões e finalizam requisições e pool, com prazo de 5 segundos; o Docker permite 7 segundos antes de forçar a parada. Os logs usam eventos e códigos seguros, sem imprimir objetos de configuração ou mensagens SQL.
+
+### Diagnosticar uma falha
+
+```powershell
+docker compose -p observability ps -a
+docker compose -p observability logs --tail 50 postgres dados-api pedidos-api
+```
+
+Alterar `POSTGRES_PASSWORD` no `.env` não altera a senha já gravada no volume. Ao reutilizar um banco da Etapa 2, mantenha sua senha original. Se houver falha de autenticação, confira essa configuração; não apague o volume para contornar o erro.
+
+É possível iniciar somente o banco para inspeção com `docker compose -p observability up -d --wait postgres`; isso não inicia as APIs.
 
 O Compose usa a imagem oficial `postgres:18.6-alpine`. O volume nomeado é montado em `/var/lib/postgresql`, conforme a organização da imagem a partir do PostgreSQL 18. O healthcheck usa `pg_isready` via TCP para aguardar o servidor definitivo, após a inicialização.
 
@@ -46,14 +96,14 @@ Os nomes e descrições são fictícios. As datas partem de instantes fixos em U
 
 ### Repetir sem substituir os dados existentes
 
-Os scripts rodam **somente quando o volume está vazio**. Reiniciar o serviço ou mudar as variáveis não refaz a carga nem altera a senha já gravada. Para testar outras quantidades, escolha um nome de projeto novo e outra porta:
+Os scripts de modelo e carga inicial rodam **somente quando o volume está vazio**. Reiniciar o serviço ou mudar as variáveis não refaz a carga nem altera a senha já gravada. Para testar outras quantidades, escolha um nome de projeto novo e outra porta:
 
 ```powershell
 $env:CLIENTS_COUNT = '3'
 $env:ORDERS_COUNT = '8'
 $env:POSTGRES_PORT = '5433'
 docker compose -p observability-small config --quiet
-docker compose -p observability-small up -d --wait --wait-timeout 60
+docker compose -p observability-small up -d --wait --wait-timeout 60 postgres
 docker compose -p observability-small exec postgres psql -U postgres -d observability -c "SELECT id, client_id, description, amount, created_at FROM orders ORDER BY id;"
 docker compose -p observability-small down
 Remove-Item Env:CLIENTS_COUNT, Env:ORDERS_COUNT, Env:POSTGRES_PORT
@@ -79,6 +129,17 @@ O teste usa PostgreSQL real, credencial efêmera em memória, portas livres e pr
 
 As assinaturas MD5 comparam todos os campos dos registros ordenados por ID; servem para reprodução do experimento, não para proteção criptográfica. Também conferimos os contadores de identidade (sequences) antes e depois dos testes de restrições e do reinício. Esses contadores podem avançar mesmo quando uma inserção falha; por isso, os testes de rejeição usam IDs explícitos para preservar seu estado. Esses testes não medem latência, N+1, JOIN, traces ou métricas.
 
+## Verificar a Etapa 3
+
+```powershell
+./tests/Test-Unit.ps1
+./tests/Test-Services.ps1
+```
+
+Ambos dispensam Node.js no Windows. O primeiro compila e executa os testes de contrato em contêineres temporários, com dependências simuladas em servidores HTTP de teste. Cobre sucesso, falhas, JSON inválido, timeout antes dos headers e durante o corpo e rejeição de configuração inválida pelos processos. Testa ainda SIGTERM na pedidos-api com requisição em curso: conclusão normal ou encerramento forçado pela aplicação em 5 segundos. O segundo inicia ambientes reais isolados com PostgreSQL e as duas APIs, verifica o comando único, acesso como `postgres`, recuperação e uso de banco existente sem criar usuários. Esses testes não medem N+1 ou desempenho e não exercitam encerramento da dados-api com uma consulta SQL longa em andamento.
+
+Os testes de integração usam portas livres, senhas efêmeras em memória e encerram os contêineres, preservando todos os volumes. Os testes de contrato preservam suas imagens Docker e removem apenas os contêineres descartáveis ao terminar. A suíte anterior continua disponível em `./tests/Test-Database.ps1` e inicia somente o banco.
+
 ## O que vamos comparar
 
 O problema N+1 acontece quando fazemos uma consulta inicial e depois outra consulta para cada resultado. Por exemplo: buscar 100 pedidos e consultar o cliente de cada um gera 101 consultas ao banco. Isso acontece mesmo se vários pedidos forem do mesmo cliente.
@@ -96,9 +157,9 @@ A carga inicial já gera 1.000 clientes e 10.000 pedidos por padrão. A geraçã
 
 A comparação usará os mesmos dados, parâmetros e condições de execução. Não vamos adicionar esperas artificiais: a diferença no tempo de resposta deverá vir do trabalho real feito pelo sistema.
 
-## Como as partes vão se conectar
+## Como as partes se conectam
 
-O caminho principal será `cliente HTTP → pedidos-api → dados-api → PostgreSQL`.
+O caminho de `/ready` já é `cliente HTTP → pedidos-api → dados-api → PostgreSQL`.
 
 - **pedidos-api:** serviço Node.js que recebe a requisição, chama a `dados-api` por HTTP e devolve a resposta.
 - **dados-api:** serviço Node.js que usa a biblioteca `pg` para consultar o PostgreSQL.
@@ -106,7 +167,7 @@ O caminho principal será `cliente HTTP → pedidos-api → dados-api → Postgr
 - **OpenTelemetry e Jaeger:** ajudam a acompanhar uma requisição pelos serviços e pelas consultas ao banco. Esse registro do percurso é chamado de trace.
 - **postgres_exporter, Prometheus e Grafana:** coletam e mostram números do banco ao longo do tempo, chamados de métricas.
 - **pg_stat_statements:** reúne estatísticas das consultas, como quantas vezes foram executadas e quanto tempo levaram.
-- **Docker Compose:** já inicia o banco; os outros componentes serão integrados nas etapas seguintes.
+- **Docker Compose:** já inicia banco e APIs; os componentes de observabilidade serão integrados nas próximas etapas.
 
 O documento de [arquitetura](docs/arquitetura.md) explica melhor o papel de cada parte.
 
@@ -140,10 +201,10 @@ observability/
     └── plano-implementacao.md
 ```
 
-As pastas ainda vazias têm um arquivo `.gitkeep` para que possam ser incluídas no Git. A pasta interna `observability/` guardará as configurações de observabilidade; `database/`, os arquivos do banco; e `tests/`, os testes e experimentos.
+As pastas ainda vazias têm um arquivo `.gitkeep` para que possam ser incluídas no Git. Cada serviço contém `src/`, `package.json`, `package-lock.json`, `tsconfig.json`, `Dockerfile` e `.dockerignore`. A pasta interna `observability/` guardará as configurações de observabilidade; `tests/` contém testes e experimentos.
 
 ## Uma etapa por vez
 
 O [plano de implementação](docs/plano-implementacao.md) descreve as oito etapas e como conferir cada entrega. Só vamos começar uma nova etapa depois da autorização do usuário. As orientações para os agentes estão em [AGENTS.md](AGENTS.md).
 
-O PostgreSQL está fixado em 18.6. A biblioteca HTTP, as versões de Node.js e os componentes de observabilidade serão definidos nas etapas correspondentes. Nenhuma dependência Node.js foi instalada.
+O PostgreSQL está fixado em 18.6 e as imagens das APIs usam Node.js 22.23.1 Alpine. As dependências diretas têm versões exatas e os lockfiles são versionados. As versões dos componentes de observabilidade serão definidas nas etapas correspondentes.
