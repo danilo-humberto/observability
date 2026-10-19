@@ -5,7 +5,7 @@ $composeArgs = @('--file', (Join-Path $repoRoot 'compose.yaml'), '--file', (Join
 $prefix = 'observability-orders-test-' + [DateTime]::UtcNow.ToString('yyyyMMddHHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 6)
 $projects = [System.Collections.Generic.List[string]]::new()
 $savedEnv = @{}
-foreach ($key in @('POSTGRES_PASSWORD', 'POSTGRES_PORT', 'PEDIDOS_PORT', 'CLIENTS_COUNT', 'ORDERS_COUNT', 'PGPOOL_MAX', 'PGCONNECT_TIMEOUT_MS', 'PGSTATEMENT_TIMEOUT_MS', 'HTTP_TIMEOUT_MS')) {
+foreach ($key in @('POSTGRES_PASSWORD', 'POSTGRES_PORT', 'PEDIDOS_PORT', 'JAEGER_PORT', 'OTEL_TRACES_SAMPLER', 'CLIENTS_COUNT', 'ORDERS_COUNT', 'PGPOOL_MAX', 'PGCONNECT_TIMEOUT_MS', 'PGSTATEMENT_TIMEOUT_MS', 'HTTP_TIMEOUT_MS')) {
     $savedEnv[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
 }
 
@@ -62,6 +62,8 @@ try {
     $env:POSTGRES_PASSWORD = [guid]::NewGuid().ToString('N')
     $env:POSTGRES_PORT = '0'
     $env:PEDIDOS_PORT = '0'
+    $env:JAEGER_PORT = '0'
+    $env:OTEL_TRACES_SAMPLER = 'parentbased_always_on'
     $env:PGPOOL_MAX = '10'
     $env:PGCONNECT_TIMEOUT_MS = '1000'
     $env:PGSTATEMENT_TIMEOUT_MS = '1000'

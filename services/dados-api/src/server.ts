@@ -2,6 +2,7 @@ import { createApp } from "./app.js";
 import { ConfigurationError, readConfig } from "./config.js";
 import { createDatabase } from "./database.js";
 import { logFailure } from "./log.js";
+import { shutdownTelemetry } from "./telemetry.js";
 
 try {
   const config = readConfig();
@@ -12,7 +13,7 @@ try {
     () => {
       console.log(
         JSON.stringify({
-          service: "dados- api",
+          service: "dados-api",
           event: "listening",
           port: config.port,
         }),
@@ -32,6 +33,7 @@ try {
     server.close(() => {
       void database
         .close()
+        .then(() => shutdownTelemetry())
         .then(() => {
           clearTimeout(deadline);
           process.exit(0);

@@ -6,7 +6,7 @@ Cada etapa precisa de autorização do usuário. Antes de começar, vamos aprese
 
 Ao terminar, vamos explicar o que mudou, as decisões tomadas, os comandos usados nas verificações, os resultados e as pendências. Depois, vamos parar e pedir autorização para continuar.
 
-Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organização, banco e dados. A Etapa 3 entregou as APIs e o ambiente com comando único. A Etapa 4 foi autorizada para implementar as rotas N+1 e JOIN; as etapas seguintes continuam dependendo de autorização própria.
+Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organização, banco e dados. A Etapa 3 entregou as APIs e o ambiente com comando único. A Etapa 4 implementou as rotas N+1 e JOIN. A Etapa 5 foi autorizada para instrumentar traces distribuídos; as etapas seguintes continuam dependendo de autorização própria.
 
 ## Etapa 1 — Pastas e documentação inicial
 
@@ -41,9 +41,13 @@ Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organizaç
 
 ## Etapa 5 — OpenTelemetry e Jaeger
 
-- **O que fazer:** configurar o OpenTelemetry para acompanhar chamadas HTTP e consultas feitas com `pg`, ligar os registros dos dois serviços e enviá-los ao Jaeger.
-- **Como conferir:** chamar as duas rotas e acompanhar, no mesmo trace, a entrada da requisição, a chamada entre os serviços e as consultas SQL. Verificar as consultas repetidas e o JOIN.
-- **Quando termina:** os traces reais permitem seguir uma requisição até o banco e identificar o N+1, sem mostrar senhas, tokens ou outras informações secretas.
+- **Decisões aprovadas:** OpenTelemetry nas duas APIs e exportação direta OTLP/HTTP Protobuf para Jaeger 2.22.0, sem Collector. Jaeger em memória, limitado a 1.000 traces, com interface em loopback na porta ajustável 16686 e OTLP somente interno. Sampler `parentbased_always_on`: 100% das chamadas locais, respeitando decisão externa. Excluir `/health` e `/ready`; falha do Jaeger não bloqueia as APIs.
+- **Implementação:** preload e hook oficial para ESM; HTTP/Express nas duas APIs, Undici para o fetch e pg para SQL. Contexto W3C propagado entre serviços; consultas exigem contexto ativo, sem spans de conexão/pool. Dependências diretas exatas: API 1.9.1; SDK Node, exporter Protobuf, instrumentação base e HTTP 0.223.0; Resources e Trace Base 2.12.0; Express 0.71.1, Undici 0.33.0 e pg 0.76.0. Mantidos os contratos, SQL, banco e timeouts de negócio.
+- **Privacidade e operação:** filtro antes da exportação mantém atributos selecionados, status e SQL parametrizado; remove headers, URLs/query strings, resultados, valores SQL, eventos e mensagens livres de erro. Fila limitada a 4.096 spans por API, lotes de 512 e intervalo de 1 segundo; timeout de envio de 1 segundo. SDK participa do encerramento dentro dos 5 segundos existentes. Falha de envio gera evento seguro `trace_export_failed`.
+- **Como conferir:** `./tests/Test-Tracing.ps1`, `./tests/Test-Unit.ps1`, `./tests/Test-Orders.ps1` e `./tests/Test-Services.ps1`. A nova suíte usa PostgreSQL e Jaeger reais, contextos conhecidos e projetos isolados. Verifica relações entre spans, 101/1.001 consultas contra uma, respostas iguais, ausência de probes e dados sensíveis, falha e recuperação do Jaeger, reinício sem histórico, falha do banco e exportação pendente no encerramento. Conferir também a interface do Jaeger.
+- **Limitações:** fila e histórico em memória podem perder spans por falha, saturação, reinício ou encerramento forçado. Conexão recusada antes da execução não gera span SQL; o erro aparece no HTTP. O filtro considera as consultas parametrizadas atuais: SQL futuro com literais precisa de revisão. Spans assíncronos de handlers Express não representam toda a duração HTTP. O custo da instrumentação não foi medido; métricas, estatísticas e testes de carga ficam para as etapas seguintes.
+- **Validação realizada em 19/10/2026:** `pwsh -NoProfile -File tests/Test-Tracing.ps1` passou com PostgreSQL, APIs e Jaeger reais, incluindo 101/1.001 spans SQL contra um, respostas iguais, árvore completa, privacidade, exclusão de probes, chamada raiz sem contexto e respeito a pai remoto não amostrado. As APIs foram recriadas e atenderam com Jaeger desligado; a recuperação exportou novas chamadas e confirmou perda do histórico. Falha real do banco e envio de spans pendentes no SIGTERM passaram, com código de saída zero das APIs. `pwsh -NoProfile -File tests/Test-Unit.ps1` passou com 35 testes e compilação TypeScript; `pwsh -NoProfile -File tests/Test-Orders.ps1` e `pwsh -NoProfile -File tests/Test-Services.ps1` passaram novamente, incluindo configuração Compose, cargas padrão/repetida/vazia, contagem SQL independente, preservação dos dados e recuperação. A interface do Jaeger foi conferida com traces reais de ambas as rotas e SQL parametrizado do JOIN. Os ensaios iniciais corrigiram duas expectativas do teste: listagem de serviços na API v3 do Jaeger 2.22 e ausência de span SQL quando a conexão é recusada antes da execução. A revisão independente apontou a lacuna de amostragem raiz, coberta na repetição final. `git diff --check` passou. Todos os contêineres de teste foram encerrados, preservando volumes. Não foram medidos desempenho ou saturação; a suíte do banco não foi repetida porque banco e carga não mudaram.
+- **Quando termina:** traces reais permitem seguir uma requisição até o banco e identificar N+1 e JOIN, com privacidade e falhas verificadas, documentação atualizada e suítes aprovadas.
 
 ## Etapa 6 — Métricas e estatísticas das consultas
 
@@ -65,4 +69,4 @@ Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organizaç
 
 ## Próxima etapa
 
-A Etapa 4 está implementada e validada. A próxima etapa de funcionalidades é a Etapa 5, OpenTelemetry e Jaeger, que depende de autorização própria.
+A Etapa 5 está implementada e validada. A próxima etapa de funcionalidades é a Etapa 6, métricas e estatísticas das consultas, que depende de autorização própria.

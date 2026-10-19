@@ -2,6 +2,7 @@ import { createApp } from "./app.js";
 import { ConfigurationError, readConfig } from "./config.js";
 import { createDadosClient, createOrdersClient } from "./dados-client.js";
 import { logFailure } from "./log.js";
+import { shutdownTelemetry } from "./telemetry.js";
 
 try {
   const config = readConfig();
@@ -28,8 +29,13 @@ try {
     const deadline = setTimeout(() => process.exit(1), 5000);
     deadline.unref();
     server.close(() => {
-      clearTimeout(deadline);
-      process.exit(0);
+      void shutdownTelemetry().then(() => {
+        clearTimeout(deadline);
+        process.exit(0);
+      }).catch((error: unknown) => {
+        logFailure("shutdown_failed", error);
+        process.exit(1);
+      });
     });
   }
   process.on("SIGTERM", stop);

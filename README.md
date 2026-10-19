@@ -6,7 +6,7 @@ Projeto para o seminário de Sistemas Distribuídos do IFPE. Vamos mostrar como 
 
 ## Onde estamos
 
-A Etapa 4 acrescenta as rotas de pedidos com **N+1 e JOIN**, mantendo duas APIs Node.js 22, TypeScript e Express 5 e acesso ao PostgreSQL com `pg`. PostgreSQL e APIs iniciam pelo mesmo Docker Compose. As ferramentas de observabilidade continuam planejadas. O repositório Git já está inicializado.
+A Etapa 5 acrescenta **traces distribuídos com OpenTelemetry e Jaeger** às rotas N+1 e JOIN. As APIs Node.js 22, TypeScript e Express 5, o PostgreSQL e o Jaeger iniciam pelo mesmo Docker Compose. Métricas, estatísticas agregadas e testes de carga continuam nas etapas seguintes. O repositório Git já está inicializado.
 
 ## Executar o ambiente completo
 
@@ -201,6 +201,39 @@ A carga inicial já gera 1.000 clientes e 10.000 pedidos por padrão. A geraçã
 
 A comparação usará os mesmos dados, parâmetros e condições de execução. Não vamos adicionar esperas artificiais: a diferença no tempo de resposta deverá vir do trabalho real feito pelo sistema.
 
+## Acompanhar uma requisição no Jaeger — Etapa 5
+
+Com o ambiente iniciado pelo comando Compose acima, abra [Jaeger local](http://127.0.0.1:16686). `JAEGER_PORT` permite mudar essa porta; a interface é publicada apenas em loopback. O recebimento OTLP fica somente na rede Docker, sem porta publicada.
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:3000/pedidos/lento?limit=100' | Out-Null
+Invoke-RestMethod 'http://127.0.0.1:3000/pedidos/otimizado?limit=100' | Out-Null
+```
+
+Na interface, selecione o serviço `pedidos-api`, clique em **Find Traces** e abra uma requisição. Aguarde alguns segundos para os lotes chegarem. O **trace** mostra o percurso completo; cada **span** representa uma operação. As entradas das duas APIs e a chamada HTTP devem pertencer ao mesmo trace, com consultas SQL descendentes da dados-api. Com 100 pedidos, a lenta tem 101 consultas e a otimizada uma com JOIN. O total de spans é maior, porque inclui HTTP e Express. Os spans SQL se chamam `SELECT observability`; o atributo `db.query.text` permite distinguir as consultas. Conexões e aquisição do pool não geram spans.
+
+A instrumentação de HTTP/Express acompanha as entradas; Undici acompanha o `fetch` nativo; `pg` acompanha o SQL. O contexto W3C (`traceparent` e `tracestate`) liga os serviços pelo HTTP. O preload e o hook oficial do OpenTelemetry inicializam a instrumentação antes dos módulos ESM da aplicação.
+
+`OTEL_TRACES_SAMPLER=parentbased_always_on` registra todas as chamadas locais sem contexto externo e respeita a decisão recebida de um cliente instrumentado. É possível usar `always_off` para desabilitar a gravação, por exemplo em um experimento posterior, recriando as APIs. `/health` e `/ready` são excluídos, inclusive suas chamadas internas e consultas de prontidão. SQL exige contexto ativo, evitando consultas órfãs dessas verificações.
+
+Um filtro antes da exportação mantém somente atributos selecionados de método, rota conhecida, status e SQL parametrizado. Não exporta parâmetros SQL, resultados, corpos, headers, URLs com query strings, mensagens livres de erro ou eventos de exceção. As falhas continuam identificadas pelo status do span e pelos códigos seguros dos logs. Essa proteção é específica das consultas atuais, que usam parâmetros; SQL futuro com valores literais precisa ser revisado antes de ser instrumentado.
+
+As APIs enviam OTLP/HTTP Protobuf diretamente para `http://jaeger:4318/v1/traces`. Há uma fila de até 4.096 spans por API, lotes de até 512 e intervalo de 1 segundo, com prazo de exportação de 1 segundo. O atendimento HTTP não aguarda o envio do lote. O encerramento normal tenta exportar o restante dentro do prazo total existente de 5 segundos. A fila é em memória: falhas, saturação ou parada forçada podem perder spans. O evento seguro `trace_export_failed` indica falha de exportação, sem imprimir a mensagem original.
+
+O Jaeger usa memória limitada a 1.000 traces, descartando registros antigos conforme necessário. Reiniciar o processo apaga o histórico, e `docker compose down` também o perde. Não há Collector separado nem armazenamento persistente. As APIs não dependem da disponibilidade do Jaeger para iniciar ou atender; novas requisições voltam a ser exportadas quando ele se recupera. Não há garantia de recuperar os spans perdidos durante a falha.
+
+Criar, acompanhar e transmitir spans consome CPU, memória e rede. Esta etapa comprova o rastreamento; os tempos mostrados não constituem um benchmark. A comparação de desempenho e o controle desse custo ficam para a Etapa 7. Não há exportação de métricas ou logs pelo SDK nesta etapa.
+
+### Verificar a Etapa 5
+
+```powershell
+./tests/Test-Tracing.ps1
+```
+
+O teste usa PostgreSQL, APIs e Jaeger reais em projeto isolado, portas livres e credencial efêmera. Identifica chamadas por contextos conhecidos e verifica respostas iguais, relações entre spans, 101 e 1.001 consultas contra uma, ausência de probes e dados sensíveis, amostragem de chamada sem contexto e respeito a pai remoto não amostrado. Confere também partida e atendimento sem Jaeger, recuperação, perda do histórico ao reiniciar, erro real do banco e exportação pendente no encerramento normal. O prazo HTTP de 30 segundos e o intervalo ampliado dos lotes para testar o encerramento existem somente no override de teste. O teste encerra contêineres e preserva o volume do PostgreSQL.
+
+As suítes anteriores continuam válidas; `Test-Orders.ps1` e `Test-Services.ps1` agora também iniciam Jaeger com porta livre. Nenhum desses testes mede ganho de desempenho.
+
 ## Como as partes se conectam
 
 O caminho de `/ready` já é `cliente HTTP → pedidos-api → dados-api → PostgreSQL`.
@@ -211,7 +244,7 @@ O caminho de `/ready` já é `cliente HTTP → pedidos-api → dados-api → Pos
 - **OpenTelemetry e Jaeger:** ajudam a acompanhar uma requisição pelos serviços e pelas consultas ao banco. Esse registro do percurso é chamado de trace.
 - **postgres_exporter, Prometheus e Grafana:** coletam e mostram números do banco ao longo do tempo, chamados de métricas.
 - **pg_stat_statements:** reúne estatísticas das consultas, como quantas vezes foram executadas e quanto tempo levaram.
-- **Docker Compose:** já inicia banco e APIs; os componentes de observabilidade serão integrados nas próximas etapas.
+- **Docker Compose:** inicia banco, APIs e Jaeger; os componentes de métricas serão integrados na Etapa 6.
 
 O documento de [arquitetura](docs/arquitetura.md) explica melhor o papel de cada parte.
 
@@ -245,10 +278,10 @@ observability/
     └── plano-implementacao.md
 ```
 
-As pastas ainda vazias têm um arquivo `.gitkeep` para que possam ser incluídas no Git. Cada serviço contém `src/`, `package.json`, `package-lock.json`, `tsconfig.json`, `Dockerfile` e `.dockerignore`. A pasta interna `observability/` guardará as configurações de observabilidade; `tests/` contém testes e experimentos.
+As pastas ainda vazias têm um arquivo `.gitkeep` para que possam ser incluídas no Git. Cada serviço contém `src/`, `package.json`, `package-lock.json`, `tsconfig.json`, `Dockerfile` e `.dockerignore`. A configuração do Jaeger fica em `observability/jaeger/config.yaml`; a configuração do SDK fica no módulo `src/telemetry.ts` de cada API. `tests/` contém testes e experimentos.
 
 ## Uma etapa por vez
 
 O [plano de implementação](docs/plano-implementacao.md) descreve as oito etapas e como conferir cada entrega. Só vamos começar uma nova etapa depois da autorização do usuário. As orientações para os agentes estão em [AGENTS.md](AGENTS.md).
 
-O PostgreSQL está fixado em 18.6 e as imagens das APIs usam Node.js 22.23.1 Alpine. As dependências diretas têm versões exatas e os lockfiles são versionados. As versões dos componentes de observabilidade serão definidas nas etapas correspondentes.
+O PostgreSQL está fixado em 18.6, as imagens das APIs usam Node.js 22.23.1 Alpine e o Jaeger usa 2.22.0. As dependências diretas têm versões exatas e os lockfiles são versionados. Os demais componentes de observabilidade serão definidos na Etapa 6.

@@ -1,0 +1,9 @@
+# Somente testes: porta livre e prazo maior para conferir todos os 1.001 spans.
+services:
+  dados-api:
+    environment:
+      OTEL_BSP_SCHEDULE_DELAY: ${TRACE_TEST_BATCH_DELAY-1000}
+  pedidos-api:
+    environment:
+      HTTP_TIMEOUT_MS: "30000"
+      OTEL_BSP_SCHEDULE_DELAY: ${TRACE_TEST_BATCH_DELAY-1000}

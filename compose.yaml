@@ -1,4 +1,12 @@
 services:
+  jaeger:
+    image: jaegertracing/jaeger:2.22.0
+    command: ["--config", "/etc/jaeger/config.yaml"]
+    volumes:
+      - ./observability/jaeger/config.yaml:/etc/jaeger/config.yaml:ro
+    ports:
+      - "127.0.0.1:${JAEGER_PORT:-16686}:16686"
+
   postgres:
     image: postgres:18.6-alpine
     environment:
@@ -30,6 +38,12 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: "3001"
+      OTEL_SERVICE_NAME: dados-api
+      OTEL_BSP_SCHEDULE_DELAY: "1000"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER-parentbased_always_on}
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
       PGHOST: postgres
       PGPORT: "5432"
       PGDATABASE: observability
@@ -60,6 +74,12 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: "3000"
+      OTEL_SERVICE_NAME: pedidos-api
+      OTEL_BSP_SCHEDULE_DELAY: "1000"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER-parentbased_always_on}
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
       DADOS_API_URL: http://dados-api:3001
       HTTP_TIMEOUT_MS: ${HTTP_TIMEOUT_MS-3000}
     ports:

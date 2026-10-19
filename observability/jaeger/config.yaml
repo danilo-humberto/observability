@@ -1,0 +1,36 @@
+# Ambiente didático local: histórico limitado e descartado ao reiniciar.
+extensions:
+  jaeger_storage:
+    backends:
+      memory:
+        memory:
+          max_traces: 1000
+  jaeger_query:
+    http:
+      endpoint: 0.0.0.0:16686
+    storage:
+      traces: memory
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: memory
+
+service:
+  extensions: [jaeger_storage, jaeger_query]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+  telemetry:
+    logs:
+      level: warn

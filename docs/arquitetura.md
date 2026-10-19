@@ -2,7 +2,7 @@
 
 ## Onde estamos e o que queremos mostrar
 
-Este documento distingue o que existe do que vamos construir. As Etapas 1 e 2 prepararam a organização, o PostgreSQL, o modelo e a carga inicial. A Etapa 3 implementou as APIs, comunicação HTTP e verificação do acesso ao banco. A Etapa 4 implementa as consultas N+1 e JOIN. A instrumentação de observabilidade ainda é planejada.
+Este documento distingue o que existe do que vamos construir. As Etapas 1 e 2 prepararam a organização, o PostgreSQL, o modelo e a carga inicial. A Etapa 3 implementou as APIs, comunicação HTTP e verificação do acesso ao banco. A Etapa 4 implementou as consultas N+1 e JOIN. A Etapa 5 acrescenta instrumentação de traces com OpenTelemetry e Jaeger. Métricas e testes de carga continuam planejados.
 
 ## O caminho de uma requisição
 
@@ -13,20 +13,20 @@ flowchart LR
     Dados -->|SQL via pg| Banco[(PostgreSQL)]
 ```
 
-A resposta volta pelo caminho inverso. Cada API é um serviço separado, com seu próprio processo, e elas conversam por HTTP. A instrumentação para acompanhar esse percurso em traces virá na Etapa 5.
+A resposta volta pelo caminho inverso. Cada API é um serviço separado, com seu próprio processo, e elas conversam por HTTP. O OpenTelemetry acompanha esse percurso em traces enviados ao Jaeger.
 
 | Parte | Responsabilidade atual ou planejada |
 | --- | --- |
 | pedidos-api | Recebe HTTP, verifica prontidão e encaminha cada busca de pedidos à dados-api, validando sua resposta. |
 | dados-api | Verifica o banco com `SELECT 1` em `/ready` e consulta pedidos com N+1 ou JOIN, usando pool de `pg`. |
 | PostgreSQL | Guarda clientes e pedidos e executa as consultas das duas versões. |
-| OpenTelemetry | Registrar as operações e levar as informações que ligam uma chamada à outra. |
-| Jaeger | Receber e mostrar o percurso das requisições, chamado de trace. |
+| OpenTelemetry | Registra entradas HTTP, chamada com fetch e consultas SQL, propagando contexto entre APIs. |
+| Jaeger | Recebe OTLP/HTTP e mostra traces, com armazenamento temporário em memória. |
 | postgres_exporter | Consultar o PostgreSQL e disponibilizar seus números para coleta. |
 | Prometheus | Coletar esses números e guardar seu histórico. |
 | Grafana | Buscar os dados no Prometheus e mostrá-los em painéis. |
 | pg_stat_statements | Reunir estatísticas das consultas executadas no PostgreSQL. |
-| Docker Compose | Já executa o banco e as duas APIs; observabilidade virá depois. |
+| Docker Compose | Executa banco, duas APIs e Jaeger; ferramentas de métricas continuam planejadas. |
 
 Somente a `dados-api` acessa o banco durante o atendimento HTTP, usando o usuário `postgres` já criado na primeira inicialização do PostgreSQL. A pedidos-api não recebe credenciais do banco.
 
@@ -64,9 +64,15 @@ flowchart LR
     Dados -->|Traces com consultas SQL| Jaeger
 ```
 
-O OpenTelemetry deverá permitir reunir as chamadas dos dois serviços e as consultas feitas com `pg` no mesmo trace. No Jaeger, poderemos ver as consultas repetidas da versão lenta e a consulta com JOIN da otimizada.
+Cada API possui seu módulo de telemetria, carregado antes da aplicação ESM por preload e pelo hook oficial de instrumentação. HTTP e Express acompanham entradas, Undici acompanha o `fetch` da pedidos-api e `pg` acompanha consultas na dados-api. O contexto W3C é propagado no HTTP, ligando pais e filhos no mesmo trace. Spans de conexão/pool são desabilitados; consultas exigem contexto ativo. `/health` e `/ready` são excluídos para não gerar traces ou consultas órfãs de prontidão.
 
-Na Etapa 5, vamos escolher as versões e a forma de enviar esses registros. A pasta `observability/otel/` guardará os arquivos dessa configuração. Sua existência não significa que usaremos um OpenTelemetry Collector separado, um componente opcional para receber e encaminhar esses registros.
+O SDK exporta lotes OTLP/HTTP Protobuf diretamente ao Jaeger 2.22.0 na porta interna 4318, sem Collector separado. Os nomes são `pedidos-api` e `dados-api`. O sampler padrão `parentbased_always_on` registra todas as chamadas locais e respeita a decisão de amostragem externa. Cada processo limita sua fila a 4.096 spans, lotes a 512 e intervalo de envio a 1 segundo; o timeout de exportação é 1 segundo. No encerramento, HTTP, pool e SDK compartilham o prazo total existente de 5 segundos.
+
+Um filtro na fronteira de exportação restringe atributos, nomes, recursos e eventos. Mantém relações, tempos, status, método, rota conhecida e SQL parametrizado; remove query strings, headers, valores SQL, resultados e mensagens de erro. Consultas futuras com literais precisam de revisão. Para diagnosticar falhas, permanecem os status dos spans e códigos seguros nos logs; falhas de envio geram `trace_export_failed`.
+
+O Jaeger não bloqueia a partida ou o atendimento das APIs. Falhas e saturação podem perder spans; não existe fila persistente. A memória do Jaeger guarda até 1.000 traces e é perdida no reinício. Apenas sua interface é publicada em loopback, na porta padrão 16686; OTLP permanece interno. A configuração está em `observability/jaeger/config.yaml`; a pasta `observability/otel/` permanece reservada, sem Collector.
+
+Com 100 pedidos, o trace da lenta contém 101 consultas e o da otimizada uma com JOIN, além de spans HTTP e Express. O tempo do span HTTP representa o atendimento; spans de handlers assíncronos do Express não devem ser interpretados como a duração completa da requisição. Não são exportadas métricas nem logs pelo OpenTelemetry nesta etapa. O custo da instrumentação será considerado na Etapa 7.
 
 ## Métricas: acompanhando os números do banco
 
@@ -108,6 +114,6 @@ A geração usa SQL, sem bibliotecas externas ou aleatoriedade. O padrão é 1.0
 
 Reiniciar preserva os dados. Para gerar outra carga, usa-se outro nome de projeto Compose e outra porta, mantendo o volume anterior. Os comandos de execução, validação e encerramento estão no [README](../README.md). Não há recarga destrutiva nem mecanismo de evolução de esquema nesta etapa.
 
-O ambiente atual já usa Docker Compose para banco e APIs. Os componentes de observabilidade serão incorporados nas etapas correspondentes. O [README](../README.md) descreve execução, variáveis, contratos, falhas e validação.
+O ambiente atual usa Docker Compose para banco, APIs e Jaeger. Os componentes de métricas serão incorporados na Etapa 6. O [README](../README.md) descreve execução, variáveis, contratos, falhas e validação.
 
 O [plano de implementação](plano-implementacao.md) mostra o que será feito e conferido em cada etapa.
