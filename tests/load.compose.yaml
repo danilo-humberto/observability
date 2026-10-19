@@ -1,0 +1,10 @@
+services:
+  load-generator:
+    image: node:22.23.1-alpine
+    profiles: [load]
+    user: node
+    working_dir: /tests
+    entrypoint: [node, /tests/load.mjs]
+    volumes:
+      - ./tests:/tests:ro
+      - ${LOAD_RESULTS_DIR:?Defina LOAD_RESULTS_DIR}:/results

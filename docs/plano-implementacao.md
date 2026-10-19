@@ -6,7 +6,7 @@ Cada etapa precisa de autorização do usuário. Antes de começar, vamos aprese
 
 Ao terminar, vamos explicar o que mudou, as decisões tomadas, os comandos usados nas verificações, os resultados e as pendências. Depois, vamos parar e pedir autorização para continuar.
 
-Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organização, banco e dados. A Etapa 3 entregou as APIs e o ambiente com comando único. A Etapa 4 implementou N+1 e JOIN; a Etapa 5, traces distribuídos. A Etapa 6 foi autorizada para métricas e estatísticas do banco; as Etapas 7 e 8 continuam dependendo de autorização própria.
+Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organização, banco e dados. A Etapa 3 entregou as APIs e o ambiente com comando único. A Etapa 4 implementou N+1 e JOIN; a Etapa 5, traces distribuídos. A Etapa 6 entregou métricas e estatísticas do banco; a Etapa 7, a comparação simples de desempenho. A Etapa 8 continua dependendo de autorização própria.
 
 ## Etapa 1 — Pastas e documentação inicial
 
@@ -61,6 +61,9 @@ Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organizaç
 
 ## Etapa 7 — Testes de carga e comparação
 
+- **Decisões aprovadas:** comparação simples com `limit=100`, concorrências 1 e 5, três rodadas por cenário, aquecimento de 10 segundos e medição de 30 segundos por rota. Gerador Node em contêiner separado, sem bibliotecas novas; observabilidade, timeouts e pool atuais preservados. Projeto isolado, dados padrão, ordem alternada e resultados locais sem promessa de ganho mínimo.
+- **Implementação:** `tests/Test-Load.ps1`, gerador e override em `tests/`, com amostras e relatório em `test-results/`. Deltas SQL sem reset, igualdade das respostas, registro de erros, espera por consultas pendentes e conferência dos dados. Método e limitações em [experimento de carga](experimento-carga.md).
+- **Validação realizada em 19/10/2026:** `pwsh -NoProfile -File tests/Test-Load.ps1` passou com os serviços reais e os três testes Node do gerador. Foram 12 medições, 31.272 respostas válidas e nenhum erro; deltas SQL exatos de 101 consultas por resposta lenta e uma por resposta otimizada, sem reset/descarte. Dados e sequences preservados, contêineres encerrados e volume mantido. Medianas das médias HTTP: 95,42 ms contra 11,46 ms com concorrência 1 e 203,84 ms contra 21,10 ms com concorrência 5, nesta máquina e com observabilidade ligada. Cálculos foram conferidos nas amostras; agrupamento da tabela de medianas corrigido e validado separadamente, com regeneração do relatório sem alterar as medições. Análise sintática e `git diff --check` passaram. As suítes anteriores não foram repetidas porque APIs, banco e Compose principal permaneceram intactos. Resultados, condições e limitações estão no documento do experimento.
 - **O que fazer:** preparar testes com várias requisições, registrar como repeti-los e comparar os tempos de resposta e as consultas das duas versões.
 - **Como conferir:** usar os mesmos dados, limites, quantidade de chamadas simultâneas, duração e configuração. Definir o aquecimento, ou seja, as chamadas de preparação antes da medição, e a ordem dos testes. Registrar erros e considerar o impacto das ferramentas de observabilidade e dos recursos da máquina.
 - **Quando termina:** temos resultados medidos que podem ser repetidos, com explicação do método, das condições e das limitações. Nenhum ganho numérico será prometido antes da medição.
@@ -73,4 +76,4 @@ Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organizaç
 
 ## Próxima etapa
 
-A Etapa 6 está implementada e validada. A próxima etapa de funcionalidades é a Etapa 7, testes de carga e comparação, que depende de autorização própria.
+A Etapa 7 está implementada e validada. A próxima etapa é a Etapa 8, documentação final e apresentação, que depende de autorização própria.

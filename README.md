@@ -278,6 +278,16 @@ A suíte usa PostgreSQL, exporter, Prometheus e Grafana reais, projetos únicos,
 
 Para reverter a Etapa 6, remova os serviços de métricas e a configuração de preload do Compose, restaure os overrides correspondentes e recrie os contêineres afetados com `up -d --build --wait --remove-orphans`. Não remova volumes. Isso interrompe o banco e perde o histórico temporário do Prometheus. A extensão pode permanecer instalada e inativa, sem apagar tabelas ou executar `DROP EXTENSION`.
 
+## Comparar desempenho — Etapa 7
+
+```powershell
+pwsh -NoProfile -File tests/Test-Load.ps1
+```
+
+O experimento usa serviços reais em projeto isolado, `limit=100`, concorrências 1 e 5 e três rodadas por cenário. Cada execução tem 10 segundos de aquecimento e 30 segundos de medição, com observabilidade ligada e timeouts originais. A execução leva aproximadamente oito minutos de carga, além de preparação e intervalos.
+
+Os resultados ficam em `test-results/observability-load-.../`: `report.md` apresenta tempos, vazão, erros e consultas SQL; `summary.json` e os arquivos de amostras permitem conferir os cálculos e as condições. Os contêineres são encerrados e os volumes preservados. Não rode outras suítes ou cargas ao mesmo tempo. Consulte o [método e as limitações do experimento](docs/experimento-carga.md) antes de interpretar os números. Nenhum ganho mínimo de desempenho é exigido pelo teste.
+
 ## Como as partes se conectam
 
 O caminho de `/ready` já é `cliente HTTP → pedidos-api → dados-api → PostgreSQL`.
