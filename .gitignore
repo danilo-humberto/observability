@@ -13,6 +13,9 @@ pnpm-debug.log*
 coverage/
 .nyc_output/
 test-results/
+
+# Guias locais da apresentação (não versionar)
+/docs/guia-local/
 playwright-report/
 
 # Build e caches

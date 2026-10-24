@@ -6,7 +6,7 @@ Cada etapa precisa de autorização do usuário. Antes de começar, vamos aprese
 
 Ao terminar, vamos explicar o que mudou, as decisões tomadas, os comandos usados nas verificações, os resultados e as pendências. Depois, vamos parar e pedir autorização para continuar.
 
-Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organização, banco e dados. A Etapa 3 entregou as APIs e o ambiente com comando único. A Etapa 4 implementou N+1 e JOIN; a Etapa 5, traces distribuídos. A Etapa 6 entregou métricas e estatísticas do banco; a Etapa 7, a comparação simples de desempenho. A Etapa 8 continua dependendo de autorização própria.
+Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organização, banco e dados. A Etapa 3 entregou as APIs e o ambiente com comando único. A Etapa 4 implementou N+1 e JOIN; a Etapa 5, traces distribuídos. A Etapa 6 entregou métricas e estatísticas do banco; a Etapa 7, a comparação simples de desempenho. A Etapa 8 reuniu a documentação final e o roteiro da apresentação.
 
 ## Etapa 1 — Pastas e documentação inicial
 
@@ -73,7 +73,9 @@ Este plano descreve o trabalho por etapas. As Etapas 1 e 2 entregaram organizaç
 - **O que fazer:** documentar como configurar, executar, verificar e encerrar o ambiente. Criar um roteiro para mostrar N+1, JOIN, traces, métricas, estatísticas e os resultados encontrados.
 - **Como conferir:** seguir o roteiro completo localmente, testar os comandos, conferir os links e comparar a documentação com o sistema que foi construído.
 - **Quando termina:** a documentação e o roteiro permitem executar a demonstração e explicar os resultados reais do projeto.
+- **Entrega:** [roteiro da apresentação](roteiro-apresentacao.md), [guia do ambiente](guia-ambiente.md), README conciso e arquitetura atualizada. O roteiro separa a demonstração interativa dos resultados históricos da [Etapa 7](experimento-carga.md).
+- **Validação em 23/10/2026:** `docker compose -p observability config --quiet` e `docker compose -p observability up --build -d --wait` passaram. `/health` e `/ready` responderam; o banco real tinha 1.000 clientes e 10.000 pedidos. As duas rotas retornaram 100 pedidos com corpos JSON idênticos. Snapshots SQL mostraram deltas de 1 consulta de pedidos e 100 de cliente na lenta, contra um JOIN na otimizada. Jaeger respondeu na interface, listou as duas APIs e mostrou traces com 101 ou um span SQL; Prometheus retornou `up=1` e séries de `pg_up`, conexões e consultas; Grafana respondeu com o dashboard provisionado. Os links locais dos quatro documentos foram conferidos. `docker compose -p observability down` encerrou o ambiente e preservou o volume. O comando de carga não foi repetido nesta etapa: o método e as medições anteriores continuam registrados na Etapa 7.
 
-## Próxima etapa
+## Estado final
 
-A Etapa 7 está implementada e validada. A próxima etapa é a Etapa 8, documentação final e apresentação, que depende de autorização própria.
+As oito etapas previstas estão implementadas. A apresentação pode seguir o roteiro com o ambiente local; novas alterações de código ou infraestrutura exigem escopo próprio.

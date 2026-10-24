@@ -1,8 +1,8 @@
-# Como o projeto vai funcionar
+# Como o projeto funciona
 
 ## Onde estamos e o que queremos mostrar
 
-As Etapas 1 e 2 prepararam a organização, o PostgreSQL, o modelo e a carga inicial. A Etapa 3 implementou as APIs e a comunicação HTTP. A Etapa 4 implementou N+1 e JOIN e a Etapa 5, traces com OpenTelemetry e Jaeger. A Etapa 6 acrescenta pg_stat_statements, postgres_exporter, Prometheus e Grafana. Testes de carga e comparação de desempenho continuam planejados para a Etapa 7.
+As Etapas 1 e 2 prepararam a organização, o PostgreSQL, o modelo e a carga inicial. A Etapa 3 implementou as APIs e a comunicação HTTP. A Etapa 4 implementou N+1 e JOIN; a Etapa 5, traces com OpenTelemetry e Jaeger. A Etapa 6 acrescentou pg_stat_statements, postgres_exporter, Prometheus e Grafana. A Etapa 7 mediu as duas rotas sob carga; o [experimento](experimento-carga.md) registra método, resultados e limites. O [roteiro](roteiro-apresentacao.md) organiza a demonstração da Etapa 8.
 
 ## O caminho de uma requisição
 
@@ -47,11 +47,11 @@ Cada requisição válida chama a dados-api uma vez, pela mesma rota e com o lim
 
 As duas versões retornam uma lista direta ordenada por `orders.id ASC`, contendo `id`, `client_id`, `description`, `amount`, `created_at` e `client: { id, name }`. Os nomes das colunas são preservados; aliases internos desambiguam o JOIN. `amount` continua string decimal e `created_at` é serializado em ISO UTC. A mesma função monta o JSON dos dois caminhos na dados-api. A pedidos-api verifica o contrato recebido, sem consultar o banco.
 
-`limit` ausente usa 100; aceita um único inteiro escrito com dígitos de 1 a 1.000. Vazio, decimal, negativo, repetido ou estruturado retorna `400 INVALID_LIMIT`. Sem pedidos, ambas retornam `[]`, executando uma consulta. A documentação completa do contrato está no README.
+`limit` ausente usa 100; aceita um único inteiro escrito com dígitos de 1 a 1.000. Vazio, decimal, negativo, repetido ou estruturado retorna `400 INVALID_LIMIT`. Sem pedidos, ambas retornam `[]`, executando uma consulta. A documentação completa do contrato está no [guia do ambiente](guia-ambiente.md#contrato-das-rotas-de-pedidos).
 
 Os timeouts da Etapa 3 foram mantidos. Um timeout HTTP não cancela o trabalho já iniciado na dados-api. A comparação exige dados estáveis: não adicionamos uma transação para garantir uma visão única entre as várias leituras da rota lenta. O teste da Etapa 4 conta consultas em logs SQL apenas de bancos isolados, sem instalar instrumentação no ambiente principal.
 
-A comparação usará o mesmo limite, os mesmos dados e condições equivalentes. Não haverá esperas artificiais. O tempo de resposta dependerá do trabalho real e do ambiente; só saberemos a diferença depois de medir.
+O experimento da Etapa 7 usou o mesmo limite, os mesmos dados e a mesma configuração, com ordem alternada. Não há esperas artificiais. As medianas observadas nesta máquina estão documentadas em [experimento-carga.md](experimento-carga.md); não representam uma promessa de desempenho em outro ambiente.
 
 ## Traces: acompanhando uma requisição
 
@@ -72,11 +72,11 @@ Um filtro na fronteira de exportação restringe atributos, nomes, recursos e ev
 
 O Jaeger não bloqueia a partida ou o atendimento das APIs. Falhas e saturação podem perder spans; não existe fila persistente. A memória do Jaeger guarda até 1.000 traces e é perdida no reinício. Apenas sua interface é publicada em loopback, na porta padrão 16686; OTLP permanece interno. A configuração está em `observability/jaeger/config.yaml`; a pasta `observability/otel/` permanece reservada, sem Collector.
 
-Com 100 pedidos, o trace da lenta contém 101 consultas e o da otimizada uma com JOIN, além de spans HTTP e Express. O tempo do span HTTP representa o atendimento; spans de handlers assíncronos do Express não devem ser interpretados como a duração completa da requisição. Não são exportadas métricas nem logs pelo OpenTelemetry nesta etapa. O custo da instrumentação será considerado na Etapa 7.
+Com 100 pedidos, o trace da lenta contém 101 consultas e o da otimizada uma com JOIN, além de spans HTTP e Express. O tempo do span HTTP representa o atendimento; spans de handlers assíncronos do Express não devem ser interpretados como a duração completa da requisição. O SDK não exporta métricas nem logs. A Etapa 7 mediu as rotas com instrumentação ativa, mas não isolou seu custo.
 
 ## Métricas: acompanhando os números do banco
 
-Uma **métrica** é um número acompanhado ao longo do tempo, como a quantidade de conexões abertas. Essa coleta acontecerá separadamente das requisições da aplicação.
+Uma **métrica** é um número acompanhado ao longo do tempo, como a quantidade de conexões abertas. Essa coleta acontece separadamente das requisições da aplicação.
 
 ```mermaid
 flowchart LR
@@ -118,8 +118,8 @@ Na primeira inicialização, `database/init/00-init.sh` valida as quantidades e 
 
 A geração usa SQL, sem bibliotecas externas ou aleatoriedade. O padrão é 1.000 clientes e 10.000 pedidos; nomes, descrições, datas UTC e valores são calculados de maneira fixa. Os pedidos são distribuídos circularmente entre os clientes. Aceitamos ao menos um cliente e zero pedidos. A distribuição simples ajuda a repetir o experimento, mas não simula uma carga comercial real.
 
-Reiniciar preserva os dados. Para gerar outra carga, usa-se outro nome de projeto Compose e outra porta, mantendo o volume anterior. Os comandos de execução, validação e encerramento estão no [README](../README.md). Não há recarga destrutiva nem mecanismo de evolução de esquema nesta etapa.
+Reiniciar preserva os dados. Para gerar outra carga, usa-se outro nome de projeto Compose e outra porta, mantendo o volume anterior. Os comandos de execução, validação e encerramento estão no [guia do ambiente](guia-ambiente.md). Não há recarga destrutiva nem mecanismo de evolução de esquema nesta etapa.
 
-O ambiente atual usa Docker Compose para banco, APIs, Jaeger e métricas. O [README](../README.md) descreve execução, variáveis, contratos, leitura dos painéis, conferência SQL, falhas, reversão e validação.
+O ambiente atual usa Docker Compose para banco, APIs, Jaeger e métricas. O [guia do ambiente](guia-ambiente.md) descreve execução, variáveis, contratos, leitura dos painéis, conferência SQL, falhas, reversão e validação.
 
-O [plano de implementação](plano-implementacao.md) mostra o que será feito e conferido em cada etapa.
+O [plano de implementação](plano-implementacao.md) registra o escopo e a validação de cada etapa.
